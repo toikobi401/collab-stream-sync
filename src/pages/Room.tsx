@@ -5,17 +5,18 @@ import { LoadingScreen } from '@/components/ui/loading';
 import { VideoPlayer } from '@/components/VideoPlayer';
 import { HostControls } from '@/components/HostControls';
 import { RoomInfo } from '@/components/RoomInfo';
-import { useStore, useUser, useRoom, useConnectionState } from '@/store';
+import { useStore, useUser, useRoom, useConnectionState, useProfile } from '@/store';
+import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
-import { wsManager } from '@/lib/websocket';
-import { api, ApiError } from '@/lib/api';
+import { supabaseApi } from '@/lib/supabase-api';
 import { LogOut, Users } from 'lucide-react';
 
 export default function Room() {
-  const [isConnecting, setIsConnecting] = useState(true);
-  const [isJoining, setIsJoining] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   
+  const auth = useAuth();
   const user = useUser();
+  const profile = useProfile();
   const room = useRoom();
   const connectionState = useConnectionState();
   const navigate = useNavigate();
@@ -28,195 +29,109 @@ export default function Room() {
     setConnectionState,
     setHostState,
     setConnected,
-    updateRTT,
-    updateOffset,
     reset
   } = useStore();
 
   // Redirect if not logged in
   useEffect(() => {
-    if (!user) {
-      navigate('/', { replace: true });
+    if (!auth.loading && !user) {
+      navigate('/auth', { replace: true });
       return;
     }
-  }, [user, navigate]);
+  }, [auth.loading, user, navigate]);
 
-  // Initialize WebSocket and join room
+  // Initialize room data and real-time subscriptions
   useEffect(() => {
-    if (!user) return;
+    if (!user || !room) return;
 
-    const connectAndJoin = async () => {
+    const initializeRoom = async () => {
       try {
-        setIsConnecting(true);
+        setIsLoading(true);
         
-        // Get auth token
-        const token = localStorage.getItem('auth-token');
-        if (!token) {
-          toast({
-            title: "Authentication error",
-            description: "Please log in again",
-            variant: "destructive"
+        // Load room state and members
+        const [roomState, members] = await Promise.all([
+          supabaseApi.getRoomState(room.id),
+          supabaseApi.getRoomMembers(room.id)
+        ]);
+        
+        // Set initial state
+        if (roomState) {
+          setVideoState({
+            videoUrl: roomState.video_url || undefined,
+            paused: roomState.paused,
+            position: roomState.position,
+            playbackRate: roomState.playback_rate,
+            hostId: roomState.host_user_id || undefined
           });
-          navigate('/', { replace: true });
-          return;
+          
+          setHostState({
+            isHost: roomState.host_user_id === user.id,
+            canBecomeHost: !roomState.host_user_id
+          });
         }
-
-        // Connect WebSocket
-        const socket = wsManager.connect(token);
         
-        // Wait for connection
-        await new Promise<void>((resolve, reject) => {
-          socket.on('connect', () => resolve());
-          socket.on('connect_error', (error: any) => reject(error));
-          setTimeout(() => reject(new Error('Connection timeout')), 10000);
-        });
-
+        setMembers(members);
         setConnected(true);
         
-        // Join default room
-        setIsJoining(true);
-        const roomResponse = await api.joinRoom('room-1');
-        setRoom(roomResponse.room);
-        
-        // Emit WebSocket join
-        socket.emit('ws:join', { roomId: 'room-1' });
-        
-        // Setup WebSocket event handlers
-        setupSocketHandlers(socket);
-        
-        // Start RTT measurement
-        startRTTMeasurement(socket);
-        
-        toast({
-          title: "Joined room",
-          description: `Welcome to ${roomResponse.room.name}`,
+        // Setup real-time subscriptions
+        const roomStateChannel = supabaseApi.subscribeToRoomState(room.id, (newState) => {
+          setVideoState({
+            videoUrl: newState.video_url || undefined,
+            paused: newState.paused,
+            position: newState.position,
+            playbackRate: newState.playback_rate,
+            hostId: newState.host_user_id || undefined
+          });
+          
+          setHostState({
+            isHost: newState.host_user_id === user.id,
+            canBecomeHost: !newState.host_user_id
+          });
         });
         
+        const membersChannel = supabaseApi.subscribeToRoomMembers(room.id, (newMembers) => {
+          setMembers(newMembers);
+        });
+        
+        toast({
+          title: "Connected to room",
+          description: `Welcome to ${room.name}`,
+        });
+        
+        // Cleanup subscriptions
+        return () => {
+          supabase.removeChannel(roomStateChannel);
+          supabase.removeChannel(membersChannel);
+        };
+        
       } catch (error) {
-        console.error('Connection error:', error);
-        
-        if (error instanceof ApiError) {
-          if (error.status === 409) {
-            toast({
-              title: "Room is full",
-              description: "The room has reached maximum capacity (5/5)",
-              variant: "destructive"
-            });
-          } else {
-            toast({
-              title: "Failed to join room",
-              description: error.message,
-              variant: "destructive"
-            });
-          }
-        } else {
-          toast({
-            title: "Connection failed", 
-            description: "Unable to connect to the server",
-            variant: "destructive"
-          });
-        }
-        
-        navigate('/', { replace: true });
+        console.error('Room initialization error:', error);
+        toast({
+          title: "Failed to load room",
+          description: "Unable to connect to the room",
+          variant: "destructive"
+        });
+        navigate('/join', { replace: true });
       } finally {
-        setIsConnecting(false);
-        setIsJoining(false);
+        setIsLoading(false);
       }
     };
 
-    connectAndJoin();
-
-    // Cleanup on unmount
+    const cleanup = initializeRoom();
+    
     return () => {
-      wsManager.disconnect();
+      cleanup?.then(cleanupFn => cleanupFn?.());
       reset();
     };
-  }, [user]);
+  }, [user, room]);
 
-  const setupSocketHandlers = (socket: any) => {
-    // Room events
-    socket.on('ws:roomMembers', ({ members }: any) => {
-      setMembers(members);
-    });
-
-    socket.on('ws:hostChanged', ({ hostId }: any) => {
-      setHostState({ 
-        isHost: user?.id === hostId,
-        canBecomeHost: hostId === null 
-      });
-      setVideoState({ hostId });
-    });
-
-    // Video sync events
-    socket.on('ws:snapshot', (data: any) => {
-      const { serverSentAt, ...videoData } = data;
-      setVideoState(videoData);
-    });
-
-    socket.on('ws:timesync', (data: any) => {
-      const { serverSentAt, ...videoData } = data;
-      setVideoState(videoData);
-      setConnectionState({ lastSync: Date.now() });
-    });
-
-    // Ping/Pong for RTT
-    socket.on('ws:pong', ({ serverNow }: any) => {
-      const clientNow = Date.now();
-      const rtt = clientNow - (serverNow - connectionState.offset);
-      updateRTT(rtt);
-      
-      // Update offset estimation
-      const newOffset = serverNow - clientNow + rtt / 2;
-      updateOffset(newOffset);
-    });
-
-    // Error handling
-    socket.on('ws:error', ({ code, message }: any) => {
-      toast({
-        title: "Server error",
-        description: message,
-        variant: "destructive"
-      });
-    });
-
-    // Connection status
-    socket.on('disconnect', () => {
-      setConnected(false);
-      toast({
-        title: "Disconnected",
-        description: "Lost connection to server",
-        variant: "destructive"
-      });
-    });
-
-    socket.on('connect', () => {
-      setConnected(true);
-    });
-  };
-
-  const startRTTMeasurement = (socket: any) => {
-    const measureRTT = async () => {
-      try {
-        const rtt = await wsManager.ping();
-        updateRTT(rtt);
-      } catch (error) {
-        console.error('RTT measurement failed:', error);
-      }
-    };
-
-    // Initial measurement
-    measureRTT();
-    
-    // Periodic measurements every 30 seconds
-    const interval = setInterval(measureRTT, 30000);
-    
-    return () => clearInterval(interval);
-  };
+  // Import supabase for cleanup
+  const { supabase } = supabaseApi;
 
   const handleLeaveRoom = async () => {
     try {
       if (room) {
-        await api.leaveRoom(room.id);
+        await supabaseApi.leaveRoom(room.id);
       }
       
       toast({
@@ -224,23 +139,23 @@ export default function Room() {
         description: "You have left the room",
       });
       
-      navigate('/', { replace: true });
+      navigate('/join', { replace: true });
     } catch (error) {
       console.error('Leave room error:', error);
-      navigate('/', { replace: true });
+      navigate('/join', { replace: true });
     }
   };
 
-  if (!user) {
+  if (!user || auth.loading) {
     return <LoadingScreen message="Loading..." />;
   }
 
-  if (isConnecting || isJoining) {
-    return (
-      <LoadingScreen 
-        message={isConnecting ? "Connecting..." : "Joining room..."} 
-      />
-    );
+  if (isLoading) {
+    return <LoadingScreen message="Loading room..." />;
+  }
+
+  if (!room) {
+    return <LoadingScreen message="Room not found, redirecting..." />;
   }
 
   return (
