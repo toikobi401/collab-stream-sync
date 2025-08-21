@@ -14,13 +14,160 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      host_lock: {
+        Row: {
+          host_user_id: string
+          locked_at: string
+          room_id: string
+        }
+        Insert: {
+          host_user_id: string
+          locked_at?: string
+          room_id: string
+        }
+        Update: {
+          host_user_id?: string
+          locked_at?: string
+          room_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "host_lock_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: true
+            referencedRelation: "rooms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profiles: {
+        Row: {
+          created_at: string
+          id: string
+          nickname: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          nickname: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          nickname?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      room_members: {
+        Row: {
+          id: string
+          joined_at: string
+          room_id: string
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          joined_at?: string
+          room_id: string
+          user_id: string
+        }
+        Update: {
+          id?: string
+          joined_at?: string
+          room_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "room_members_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: false
+            referencedRelation: "rooms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      room_state: {
+        Row: {
+          host_user_id: string | null
+          paused: boolean
+          playback_rate: number
+          position: number
+          room_id: string
+          updated_at: string
+          video_url: string | null
+        }
+        Insert: {
+          host_user_id?: string | null
+          paused?: boolean
+          playback_rate?: number
+          position?: number
+          room_id: string
+          updated_at?: string
+          video_url?: string | null
+        }
+        Update: {
+          host_user_id?: string | null
+          paused?: boolean
+          playback_rate?: number
+          position?: number
+          room_id?: string
+          updated_at?: string
+          video_url?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "room_state_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: true
+            referencedRelation: "rooms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      rooms: {
+        Row: {
+          capacity: number
+          created_at: string
+          enabled: boolean
+          id: string
+          name: string
+        }
+        Insert: {
+          capacity?: number
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          name: string
+        }
+        Update: {
+          capacity?: number
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          name?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      claim_host: {
+        Args: { room_id_param: string }
+        Returns: boolean
+      }
+      transfer_host: {
+        Args: { new_host_id: string; room_id_param: string }
+        Returns: boolean
+      }
     }
     Enums: {
       [_ in never]: never
