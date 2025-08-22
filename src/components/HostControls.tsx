@@ -5,10 +5,9 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { useStore, useHostState, useRoom, useMembers } from '@/store';
+import { useStore, useHostState, useRoom, useMembers, useUser } from '@/store';
 import { useToast } from '@/hooks/use-toast';
-import { api, ApiError } from '@/lib/api';
-import { wsManager } from '@/lib/websocket';
+import { supabaseApi } from '@/lib/supabase-api';
 import { Crown, Upload, UserCheck, AlertCircle } from 'lucide-react';
 
 export function HostControls() {
@@ -19,6 +18,7 @@ export function HostControls() {
   const hostState = useHostState();
   const room = useRoom();
   const members = useMembers();
+  const user = useUser();
   const setHostState = useStore(state => state.setHostState);
   const { toast } = useToast();
 
@@ -27,21 +27,27 @@ export function HostControls() {
     
     setIsLoading(true);
     try {
-      await api.claimHost(room.id);
-      setHostState({ isHost: true, canBecomeHost: false });
-      
-      toast({
-        title: "Host claimed",
-        description: "You are now the host",
-      });
-    } catch (error) {
-      if (error instanceof ApiError) {
+      const success = await supabaseApi.claimHost(room.id);
+      if (success) {
+        setHostState({ isHost: true, canBecomeHost: false });
+        toast({
+          title: "Host claimed",
+          description: "You are now the host",
+        });
+      } else {
         toast({
           title: "Cannot claim host",
-          description: error.message,
+          description: "Someone else is already the host",
           variant: "destructive"
         });
       }
+    } catch (error) {
+      console.error('Claim host error:', error);
+      toast({
+        title: "Cannot claim host",
+        description: "Failed to claim host privileges",
+        variant: "destructive"
+      });
     } finally {
       setIsLoading(false);
     }
@@ -52,22 +58,28 @@ export function HostControls() {
     
     setIsLoading(true);
     try {
-      await api.transferHost(room.id, transferTarget);
-      setHostState({ isHost: false, canBecomeHost: true });
-      setTransferTarget('');
-      
-      toast({
-        title: "Host transferred",
-        description: "Host privileges have been transferred",
-      });
-    } catch (error) {
-      if (error instanceof ApiError) {
+      const success = await supabaseApi.transferHost(room.id, transferTarget);
+      if (success) {
+        setHostState({ isHost: false, canBecomeHost: true });
+        setTransferTarget('');
+        toast({
+          title: "Host transferred",
+          description: "Host privileges have been transferred",
+        });
+      } else {
         toast({
           title: "Transfer failed",
-          description: error.message,
+          description: "Failed to transfer host privileges",
           variant: "destructive"
         });
       }
+    } catch (error) {
+      console.error('Transfer host error:', error);
+      toast({
+        title: "Transfer failed",
+        description: "Failed to transfer host privileges",
+        variant: "destructive"
+      });
     } finally {
       setIsLoading(false);
     }
@@ -89,17 +101,19 @@ export function HostControls() {
     
     setIsLoading(true);
     try {
-      const socket = wsManager.getSocket();
-      if (socket) {
-        socket.emit('ws:load', { videoUrl: videoUrl.trim() });
-        setVideoUrl('');
-        
-        toast({
-          title: "Video loaded",
-          description: "Video has been loaded for all viewers",
-        });
-      }
+      await supabaseApi.updateRoomState(room.id, {
+        video_url: videoUrl.trim(),
+        position: 0,
+        paused: true
+      });
+      
+      setVideoUrl('');
+      toast({
+        title: "Video loaded",
+        description: "Video has been loaded for all viewers",
+      });
     } catch (error) {
+      console.error('Load video error:', error);
       toast({
         title: "Load failed",
         description: "Failed to load video",
@@ -110,7 +124,11 @@ export function HostControls() {
     }
   };
 
-  const otherMembers = members.filter(member => member.id !== useStore.getState().user?.id);
+  const otherMembers = members.filter(member => member.user_id !== user?.id);
+
+  const getMemberName = (member: any) => {
+    return member.profiles?.nickname || member.nickname || 'Unknown User';
+  };
 
   return (
     <Card className="gradient-card border-card-border">
@@ -189,8 +207,8 @@ export function HostControls() {
                     </SelectTrigger>
                     <SelectContent>
                       {otherMembers.map((member) => (
-                        <SelectItem key={member.id} value={member.id}>
-                          {member.nickname}
+                        <SelectItem key={member.user_id} value={member.user_id}>
+                          {getMemberName(member)}
                         </SelectItem>
                       ))}
                     </SelectContent>

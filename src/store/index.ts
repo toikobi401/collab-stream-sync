@@ -23,6 +23,8 @@ interface AppStore {
   setConnected: (connected: boolean) => void;
   updateRTT: (rtt: number) => void;
   updateOffset: (offset: number) => void;
+  updateVideoTime: (time: number) => void;
+  updateDrift: (drift: number) => void;
   
   // Host
   hostState: HostState;
@@ -78,6 +80,12 @@ export const useStore = create<AppStore>((set, get) => ({
   })),
   updateOffset: (offset) => set((prev) => ({
     connectionState: { ...prev.connectionState, offset }
+  })),
+  updateVideoTime: (time) => set((prev) => ({
+    videoState: { ...prev.videoState, position: time }
+  })),
+  updateDrift: (drift) => set((prev) => ({
+    connectionState: { ...prev.connectionState, drift }
   })),
   
   // Host

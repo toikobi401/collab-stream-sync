@@ -5,7 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Slider } from '@/components/ui/slider';
 import { Badge } from '@/components/ui/badge';
 import { useStore, useVideoState, useHostState, useConnectionState } from '@/store';
-import { wsManager } from '@/lib/websocket';
+import { supabaseApi } from '@/lib/supabase-api';
 import { Play, Pause, RotateCcw, Volume2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -21,7 +21,6 @@ export function VideoPlayer() {
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(0.8);
   const [isSeeking, setIsSeeking] = useState(false);
-  const [lastSyncTime, setLastSyncTime] = useState(0);
   
   const videoState = useVideoState();
   const hostState = useHostState();
@@ -29,139 +28,69 @@ export function VideoPlayer() {
   const updateVideoTime = useStore(state => state.updateVideoTime);
   const updateDrift = useStore(state => state.updateDrift);
 
-  // Calculate server time based on offset
-  const getServerTime = useCallback(() => {
-    return Date.now() + connectionState.offset;
-  }, [connectionState.offset]);
-
-  // Handle video events from server
-  useEffect(() => {
-    const socket = wsManager.getSocket();
-    if (!socket) return;
-
-    const handleVideoPlay = ({ startAtServerTime, position }: any) => {
-      const serverNow = getServerTime();
-      const delay = Math.max(0, startAtServerTime - serverNow);
-      
-      setTimeout(() => {
-        if (playerRef.current) {
-          playerRef.current.seekTo(position, 'seconds');
-          setLocalTime(position);
-          updateVideoTime(position);
-        }
-      }, delay);
-    };
-
-    const handleVideoPause = ({ position }: any) => {
-      if (playerRef.current) {
-        playerRef.current.seekTo(position, 'seconds');
-        setLocalTime(position);
-        updateVideoTime(position);
-      }
-    };
-
-    const handleVideoSeek = ({ toSeconds }: any) => {
-      if (playerRef.current) {
-        playerRef.current.seekTo(toSeconds, 'seconds');
-        setLocalTime(toSeconds);
-        updateVideoTime(toSeconds);
-      }
-    };
-
-    const handleVideoRate = ({ playbackRate }: any) => {
-      // React Player doesn't support dynamic playback rate easily
-      // This would need custom implementation or different player
-      console.log('Playback rate change:', playbackRate);
-    };
-
-    const handleVideoLoad = ({ videoUrl }: any) => {
-      // Video URL is updated through store, player will reload
-      setLocalTime(0);
-      updateVideoTime(0);
-    };
-
-    const handleTimeSync = (data: any) => {
-      const { position, paused, serverSentAt } = data;
-      const serverNow = getServerTime();
-      const timeSinceSync = (serverNow - serverSentAt) / 1000;
-      const expectedPosition = paused ? position : position + timeSinceSync;
-      
-      const drift = Math.abs(localTime - expectedPosition) * 1000; // ms
-      updateDrift(drift);
-      
-      // Hard seek if drift > 400ms
-      if (drift > 400 && playerRef.current && !isSeeking) {
-        playerRef.current.seekTo(expectedPosition, 'seconds');
-        setLocalTime(expectedPosition);
-        updateVideoTime(expectedPosition);
-        setLastSyncTime(Date.now());
-      }
-    };
-
-    socket.on('ws:video-play', handleVideoPlay);
-    socket.on('ws:video-pause', handleVideoPause);
-    socket.on('ws:video-seek', handleVideoSeek);
-    socket.on('ws:video-rate', handleVideoRate);
-    socket.on('ws:video-load', handleVideoLoad);
-    socket.on('ws:timesync', handleTimeSync);
-
-    return () => {
-      socket.off('ws:video-play', handleVideoPlay);
-      socket.off('ws:video-pause', handleVideoPause);
-      socket.off('ws:video-seek', handleVideoSeek);
-      socket.off('ws:video-rate', handleVideoRate);
-      socket.off('ws:video-load', handleVideoLoad);
-      socket.off('ws:timesync', handleTimeSync);
-    };
-  }, [getServerTime, localTime, isSeeking, updateVideoTime, updateDrift]);
-
   // Update local time
   const handleProgress = useCallback((state: { playedSeconds: number }) => {
     if (!isSeeking) {
       setLocalTime(state.playedSeconds);
+      updateVideoTime(state.playedSeconds);
     }
-  }, [isSeeking]);
+  }, [isSeeking, updateVideoTime]);
 
   // Host controls
-  const handlePlayPause = () => {
-    if (!hostState.isHost) return;
+  const handlePlayPause = async () => {
+    if (!hostState.isHost || !useStore.getState().room) return;
     
-    const socket = wsManager.getSocket();
-    if (!socket) return;
-
-    const serverTime = getServerTime();
+    const room = useStore.getState().room;
+    if (!room) return;
     
-    if (videoState.paused) {
-      socket.emit('ws:play', { atHostTime: serverTime });
-    } else {
-      socket.emit('ws:pause', { atHostTime: serverTime });
+    try {
+      await supabaseApi.updateRoomState(room.id, {
+        paused: !videoState.paused,
+        position: localTime
+      });
+    } catch (error) {
+      console.error('Play/pause error:', error);
     }
   };
 
-  const handleSeek = (newTime: number) => {
-    if (!hostState.isHost) return;
+  const handleSeek = async (newTime: number) => {
+    if (!hostState.isHost || !useStore.getState().room) return;
     
-    const socket = wsManager.getSocket();
-    if (!socket) return;
-
+    const room = useStore.getState().room;
+    if (!room) return;
+    
     setIsSeeking(true);
-    const serverTime = getServerTime();
+    setLocalTime(newTime);
     
-    socket.emit('ws:seek', { 
-      toSeconds: newTime, 
-      atHostTime: serverTime 
-    });
+    try {
+      await supabaseApi.updateRoomState(room.id, {
+        position: newTime
+      });
+    } catch (error) {
+      console.error('Seek error:', error);
+    }
     
     setTimeout(() => setIsSeeking(false), 100);
   };
 
   const handleSyncNow = () => {
-    const socket = wsManager.getSocket();
-    if (!socket) return;
-
-    // Request immediate time sync
-    socket.emit('ws:ping', { clientSentAt: Date.now() });
+    if (playerRef.current) {
+      playerRef.current.seekTo(videoState.position, 'seconds');
+      setLocalTime(videoState.position);
+      updateVideoTime(videoState.position);
+    }
   };
+
+  // Sync video state when it changes
+  useEffect(() => {
+    if (playerRef.current && !isSeeking) {
+      const timeDiff = Math.abs(localTime - videoState.position);
+      if (timeDiff > 1) {
+        playerRef.current.seekTo(videoState.position, 'seconds');
+        setLocalTime(videoState.position);
+      }
+    }
+  }, [videoState.position, localTime, isSeeking]);
 
   if (!videoState.videoUrl) {
     return (
@@ -211,12 +140,12 @@ export function VideoPlayer() {
               variant="secondary" 
               className={cn(
                 "bg-black/50 backdrop-blur-sm",
-                connectionState.drift > 400 ? "border-destructive/50" : 
-                connectionState.drift > 100 ? "border-warning/50" : 
+                (connectionState.drift || 0) > 400 ? "border-destructive/50" : 
+                (connectionState.drift || 0) > 100 ? "border-warning/50" : 
                 "border-success/50"
               )}
             >
-              {connectionState.drift.toFixed(0)}ms drift
+              {(connectionState.drift || 0).toFixed(0)}ms drift
             </Badge>
             
             {hostState.isHost && (

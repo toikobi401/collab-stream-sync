@@ -125,8 +125,8 @@ export default function Room() {
     };
   }, [user, room]);
 
-  // Import supabase for cleanup
-  const { supabase } = supabaseApi;
+  // Import supabase from the client for cleanup
+  const { supabase } = require('@/integrations/supabase/client');
 
   const handleLeaveRoom = async () => {
     try {

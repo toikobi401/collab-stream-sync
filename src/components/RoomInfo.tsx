@@ -25,7 +25,7 @@ export function RoomInfo() {
     return 'success';
   };
 
-  const currentHost = members.find(member => member.id === videoState.hostId);
+  const currentHost = members.find(member => member.user_id === videoState.hostId);
 
   return (
     <div className="space-y-6">
@@ -54,7 +54,7 @@ export function RoomInfo() {
             <div className="flex items-center justify-between">
               <span className="text-sm text-muted-foreground">Current Host</span>
               <StatusBadge status="host">
-                {currentHost.nickname}
+                {currentHost.profiles?.nickname || currentHost.nickname || 'Unknown User'}
               </StatusBadge>
             </div>
           )}
@@ -70,10 +70,10 @@ export function RoomInfo() {
           <div className="space-y-3">
             {members.map((member) => (
               <div key={member.id} className="flex items-center justify-between">
-                <span className="text-sm">{member.nickname}</span>
+                <span className="text-sm">{member.profiles?.nickname || member.nickname || 'Unknown User'}</span>
                 <div className="flex gap-2">
                   <StatusBadge status="online" />
-                  {member.id === videoState.hostId && (
+                  {member.user_id === videoState.hostId && (
                     <StatusBadge status="host">HOST</StatusBadge>
                   )}
                 </div>
@@ -96,9 +96,9 @@ export function RoomInfo() {
         
         <MetricCard
           title="Sync Drift"
-          value={connectionState.drift.toFixed(0)}
+          value={(connectionState.drift || 0).toFixed(0)}
           suffix="ms"
-          variant={getDriftStatus(connectionState.drift)}
+          variant={getDriftStatus(connectionState.drift || 0)}
           icon={<Activity className="w-4 h-4" />}
           description="Video sync accuracy"
         />

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -6,8 +6,9 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loading } from '@/components/ui/loading';
 import { useToast } from '@/hooks/use-toast';
-import { api, ApiError } from '@/lib/api';
+import { useAuth } from '@/hooks/useAuth';
 import { useStore } from '@/store';
+import { supabaseApi } from '@/lib/supabase-api';
 import { Users, Video, Zap } from 'lucide-react';
 import heroImage from '@/assets/hero-streaming.jpg';
 import logoImage from '@/assets/logo-sync.jpg';
@@ -15,9 +16,19 @@ import logoImage from '@/assets/logo-sync.jpg';
 export default function Join() {
   const [nickname, setNickname] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [roomCount, setRoomCount] = useState('0/5');
+  
   const { toast } = useToast();
   const navigate = useNavigate();
-  const setUser = useStore(state => state.setUser);
+  const auth = useAuth();
+  const { setRoom } = useStore();
+
+  // Redirect if already authenticated
+  useEffect(() => {
+    if (!auth.loading && auth.user) {
+      navigate('/room', { replace: true });
+    }
+  }, [auth.loading, auth.user, navigate]);
 
   const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,35 +45,50 @@ export default function Join() {
     setIsLoading(true);
     
     try {
-      const response = await api.login(nickname.trim());
-      setUser(response.user);
+      const { user, session } = await supabaseApi.signUp(
+        `${nickname.trim()}@temp.com`, 
+        'temppassword', 
+        nickname.trim()
+      );
+      
+      if (user) {
+        // Set the default room
+        setRoom({
+          id: '00000000-0000-0000-0000-000000000001',
+          name: 'room-1',
+          capacity: 5,
+          members: [],
+          currentMembers: 0,
+          enabled: true
+        });
+        
+        toast({
+          title: "Welcome!",
+          description: `Logged in as ${nickname.trim()}`,
+        });
+        
+        navigate('/room');
+      }
+    } catch (error: any) {
+      console.error('Join error:', error);
       
       toast({
-        title: "Welcome!",
-        description: `Logged in as ${response.user.nickname}`,
+        title: "Join failed",
+        description: error.message || "Unable to join the room. Please try again.",
+        variant: "destructive"
       });
-      
-      navigate('/room');
-    } catch (error) {
-      console.error('Login error:', error);
-      
-      if (error instanceof ApiError) {
-        toast({
-          title: "Login failed",
-          description: error.message,
-          variant: "destructive"
-        });
-      } else {
-        toast({
-          title: "Connection failed",
-          description: "Unable to connect to the server. Please try again.",
-          variant: "destructive"
-        });
-      }
     } finally {
       setIsLoading(false);
     }
   };
+
+  if (auth.loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loading size="lg" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen relative overflow-hidden">
@@ -170,7 +196,7 @@ export default function Join() {
                 <span className="text-sm text-muted-foreground">Default Room</span>
                 <div className="flex items-center gap-2">
                   <div className="w-2 h-2 rounded-full bg-success animate-pulse" />
-                  <span className="text-sm font-mono">3/5</span>
+                  <span className="text-sm font-mono">{roomCount}</span>
                 </div>
               </div>
             </CardContent>

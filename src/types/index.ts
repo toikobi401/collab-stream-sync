@@ -30,6 +30,7 @@ export interface RoomMember {
   user_id: string;
   joined_at: string;
   profiles?: Profile;
+  nickname?: string; // For backwards compatibility
 }
 
 export interface RoomState {

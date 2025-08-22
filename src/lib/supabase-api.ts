@@ -75,7 +75,8 @@ export const supabaseApi = {
       .maybeSingle();
     
     if (error) throw new SupabaseError('ROOM_ERROR', error.message);
-    return data;
+    if (!data) return null;
+    return { ...data, members: [], currentMembers: 0 };
   },
 
   getRooms: async (): Promise<Room[]> => {
@@ -133,7 +134,8 @@ export const supabaseApi = {
       .order('joined_at');
     
     if (error) throw new SupabaseError('MEMBERS_ERROR', error.message);
-    return data || [];
+    // Type assertion needed due to Supabase join query complexity
+    return (data || []) as unknown as RoomMember[];
   },
 
   // Room State
