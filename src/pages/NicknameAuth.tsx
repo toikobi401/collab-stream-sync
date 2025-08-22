@@ -8,7 +8,7 @@ import { useToast } from '@/hooks/use-toast';
 import { supabaseApi } from '@/lib/supabase-api';
 import { useAuth } from '@/hooks/useAuth';
 import { LoadingScreen } from '@/components/ui/loading';
-import { Play, Users } from 'lucide-react';
+import { Play, Users, Code } from 'lucide-react';
 
 export default function NicknameAuth() {
   const [nickname, setNickname] = useState('');
@@ -48,6 +48,33 @@ export default function NicknameAuth() {
     } catch (err: any) {
       console.error('Login error:', err);
       setError(err.message || 'Failed to login');
+      
+      toast({
+        title: "Login failed",
+        description: err.message || 'Please try again',
+        variant: "destructive"
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDevLogin = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      await supabaseApi.signUpWithNickname('dev');
+      
+      toast({
+        title: "Welcome, Developer!",
+        description: "Logged in as dev account",
+      });
+      
+      navigate('/rooms', { replace: true });
+    } catch (err: any) {
+      console.error('Dev login error:', err);
+      setError(err.message || 'Failed to login with dev account');
       
       toast({
         title: "Login failed",
@@ -119,6 +146,23 @@ export default function NicknameAuth() {
                 {loading ? "Joining..." : "Join Stream"}
               </Button>
             </form>
+            
+            {/* Dev Account Section */}
+            <div className="mt-6 pt-4 border-t border-border">
+              <div className="text-center mb-3">
+                <p className="text-sm text-muted-foreground">Quick access for developers</p>
+              </div>
+              <Button 
+                onClick={handleDevLogin}
+                variant="outline"
+                className="w-full"
+                disabled={loading}
+                size="lg"
+              >
+                <Code className="w-4 h-4 mr-2" />
+                Sign in as Dev
+              </Button>
+            </div>
           </CardContent>
         </Card>
 
