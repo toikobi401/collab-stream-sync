@@ -223,6 +223,14 @@ export type Database = {
         Args: { room_id_param: string }
         Returns: boolean
       }
+      is_room_host: {
+        Args: { room_id_param: string }
+        Returns: boolean
+      }
+      is_room_member: {
+        Args: { room_id_param: string }
+        Returns: boolean
+      }
       transfer_host: {
         Args: { new_host_id: string; room_id_param: string }
         Returns: boolean
