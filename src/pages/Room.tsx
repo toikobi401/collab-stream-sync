@@ -9,6 +9,7 @@ import { useStore, useUser, useRoom, useConnectionState, useProfile } from '@/st
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { supabaseApi } from '@/lib/supabase-api';
+import { supabase } from '@/integrations/supabase/client';
 import { LogOut, Users } from 'lucide-react';
 
 export default function Room() {
@@ -125,8 +126,6 @@ export default function Room() {
     };
   }, [user, room]);
 
-  // Import supabase from the client for cleanup
-  const { supabase } = require('@/integrations/supabase/client');
 
   const handleLeaveRoom = async () => {
     try {
