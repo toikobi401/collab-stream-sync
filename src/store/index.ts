@@ -7,6 +7,10 @@ interface AppStore {
   auth: AuthState;
   setAuth: (auth: Partial<AuthState>) => void;
   
+  // User
+  user: User | null;
+  setUser: (user: User | null) => void;
+  
   // Room
   room: Room | null;
   members: RoomMember[];
@@ -45,6 +49,10 @@ export const useStore = create<AppStore>((set, get) => ({
   setAuth: (auth) => set((prev) => ({
     auth: { ...prev.auth, ...auth }
   })),
+  
+  // User
+  user: null,
+  setUser: (user) => set({ user }),
   
   // Room
   room: null,

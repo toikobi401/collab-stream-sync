@@ -193,27 +193,6 @@ export type Database = {
           },
         ]
       }
-      storage_buckets: {
-        Row: {
-          created_at: string | null
-          id: string
-          name: string
-          public: boolean | null
-        }
-        Insert: {
-          created_at?: string | null
-          id: string
-          name: string
-          public?: boolean | null
-        }
-        Update: {
-          created_at?: string | null
-          id?: string
-          name?: string
-          public?: boolean | null
-        }
-        Relationships: []
-      }
     }
     Views: {
       [_ in never]: never

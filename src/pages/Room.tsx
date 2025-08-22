@@ -5,6 +5,7 @@ import { LoadingScreen } from '@/components/ui/loading';
 import { VideoPlayer } from '@/components/VideoPlayer';
 import { HostControls } from '@/components/HostControls';
 import { RoomInfo } from '@/components/RoomInfo';
+import { VideoUpload } from '@/components/VideoUpload';
 import { useStore, useUser, useRoom, useConnectionState, useProfile } from '@/store';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
@@ -202,6 +203,7 @@ export default function Room() {
           <div className="space-y-6">
             <RoomInfo />
             <HostControls />
+            <VideoUpload />
           </div>
         </div>
       </div>

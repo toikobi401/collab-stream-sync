@@ -1,14 +1,13 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { useStore, useHostState, useRoom, useMembers, useUser } from '@/store';
 import { useToast } from '@/hooks/use-toast';
 import { supabaseApi } from '@/lib/supabase-api';
-import { Crown, Upload, UserCheck, AlertCircle } from 'lucide-react';
+import { VideoUpload } from '@/components/VideoUpload';
+import { Crown, UserCheck, AlertCircle } from 'lucide-react';
 
 export function HostControls() {
   const [videoUrl, setVideoUrl] = useState('');
@@ -170,36 +169,10 @@ export function HostControls() {
         {/* Host-only controls */}
         {hostState.isHost && (
           <>
-            {/* Load Video */}
-            <div className="space-y-3">
-              <Label htmlFor="video-url">Load Video URL</Label>
-              <div className="flex gap-2">
-                <Input
-                  id="video-url"
-                  type="url"
-                  placeholder="https://example.com/video.mp4"
-                  value={videoUrl}
-                  onChange={(e) => setVideoUrl(e.target.value)}
-                  disabled={isLoading}
-                  className="bg-input/50 border-card-border"
-                />
-                <Button 
-                  onClick={handleLoadVideo}
-                  disabled={isLoading || !videoUrl.trim()}
-                  size="sm"
-                >
-                  <Upload className="w-4 h-4" />
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Supports MP4, HLS, YouTube, and other formats
-              </p>
-            </div>
-
             {/* Transfer Host */}
             {otherMembers.length > 0 && (
               <div className="space-y-3">
-                <Label>Transfer Host</Label>
+                <label className="text-sm font-medium">Transfer Host</label>
                 <div className="flex gap-2">
                   <Select value={transferTarget} onValueChange={setTransferTarget}>
                     <SelectTrigger className="bg-input/50 border-card-border">

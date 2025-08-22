@@ -22,6 +22,7 @@ export interface Room {
   currentMembers: number;
   enabled?: boolean;
   created_at?: string;
+  created_by?: string;
 }
 
 export interface RoomMember {
@@ -36,6 +37,8 @@ export interface RoomMember {
 export interface RoomState {
   room_id: string;
   video_url?: string;
+  video_filename?: string;
+  video_type?: string;
   paused: boolean;
   position: number;
   playback_rate: number;

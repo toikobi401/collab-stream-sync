@@ -9,7 +9,44 @@ export class SupabaseError extends Error {
 }
 
 export const supabaseApi = {
-  // Authentication
+  // Authentication - nickname only
+  signUpWithNickname: async (nickname: string) => {
+    // Use nickname as both email (with dummy domain) and password
+    const email = `${nickname}@${nickname}.local`;
+    const password = nickname;
+    
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: { nickname },
+        emailRedirectTo: `${window.location.origin}/`
+      }
+    });
+
+    if (error && error.message.includes('already been registered')) {
+      // If user exists, sign them in instead
+      return await supabaseApi.signInWithNickname(nickname);
+    }
+
+    if (error) throw new SupabaseError(error.name || 'SIGNUP_ERROR', error.message);
+    return data;
+  },
+
+  signInWithNickname: async (nickname: string) => {
+    const email = `${nickname}@${nickname}.local`;
+    const password = nickname;
+    
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password
+    });
+
+    if (error) throw new SupabaseError(error.name || 'SIGNIN_ERROR', error.message);
+    return data;
+  },
+
+  // Traditional authentication (kept for backward compatibility)
   signUp: async (email: string, password: string, nickname: string) => {
     const redirectUrl = `${window.location.origin}/`;
     
@@ -221,5 +258,126 @@ export const supabaseApi = {
         }
       )
       .subscribe();
+  },
+
+  // Room Management
+  createRoom: async (name: string): Promise<Room> => {
+    const user = (await supabase.auth.getUser()).data.user;
+    if (!user) throw new SupabaseError('AUTH_ERROR', 'Not authenticated');
+
+    const { data, error } = await supabase
+      .from('rooms')
+      .insert({
+        name,
+        created_by: user.id
+      })
+      .select()
+      .single();
+
+    if (error) {
+      if (error.message.includes('Maximum number of rooms')) {
+        throw new SupabaseError('ROOM_LIMIT', 'Maximum number of rooms (3) reached');
+      }
+      throw new SupabaseError('CREATE_ROOM_ERROR', error.message);
+    }
+
+    // Create initial room state
+    await supabase
+      .from('room_state')
+      .insert({
+        room_id: data.id,
+        paused: true,
+        position: 0,
+        playback_rate: 1.0
+      });
+
+    return { ...data, members: [], currentMembers: 0 };
+  },
+
+  getRoomWithMembers: async (roomId: string): Promise<Room | null> => {
+    const [room, members] = await Promise.all([
+      supabaseApi.getRoom(roomId),
+      supabaseApi.getRoomMembers(roomId)
+    ]);
+
+    if (!room) return null;
+
+    return {
+      ...room,
+      members: members.map(m => ({
+        id: m.user_id,
+        nickname: m.profiles?.nickname || 'Unknown',
+        joinedAt: new Date(m.joined_at)
+      })),
+      currentMembers: members.length
+    };
+  },
+
+  // File Upload
+  uploadVideo: async (roomId: string, file: File): Promise<string> => {
+    const user = (await supabase.auth.getUser()).data.user;
+    if (!user) throw new SupabaseError('AUTH_ERROR', 'Not authenticated');
+
+    // Validate file
+    const maxSize = 200 * 1024 * 1024; // 200MB
+    const allowedTypes = ['video/mp4', 'application/x-mpegURL'];
+    
+    if (file.size > maxSize) {
+      throw new SupabaseError('FILE_SIZE_ERROR', 'File size exceeds 200MB limit');
+    }
+    
+    if (!allowedTypes.includes(file.type) && !file.name.endsWith('.m3u8')) {
+      throw new SupabaseError('FILE_TYPE_ERROR', 'Only MP4 and HLS (.m3u8) files are allowed');
+    }
+
+    // Upload to storage
+    const fileName = `${roomId}/${Date.now()}-${file.name}`;
+    const { data, error } = await supabase.storage
+      .from('room-videos')
+      .upload(fileName, file, {
+        cacheControl: '3600',
+        upsert: false
+      });
+
+    if (error) throw new SupabaseError('UPLOAD_ERROR', error.message);
+
+    // Get public URL
+    const { data: urlData } = supabase.storage
+      .from('room-videos')
+      .getPublicUrl(fileName);
+
+    const videoUrl = urlData.publicUrl;
+
+    // Update room state with new video
+    await supabaseApi.updateRoomState(roomId, {
+      video_url: videoUrl,
+      video_filename: file.name,
+      video_type: 'upload',
+      paused: true,
+      position: 0
+    });
+
+    return videoUrl;
+  },
+
+  loadVideoFromUrl: async (roomId: string, url: string): Promise<void> => {
+    const user = (await supabase.auth.getUser()).data.user;
+    if (!user) throw new SupabaseError('AUTH_ERROR', 'Not authenticated');
+
+    // Basic URL validation
+    try {
+      new URL(url);
+    } catch {
+      throw new SupabaseError('INVALID_URL', 'Invalid URL format');
+    }
+
+    // Update room state with new video URL
+    await supabaseApi.updateRoomState(roomId, {
+      video_url: url,
+      video_filename: null,
+      video_type: 'url',
+      paused: true,
+      position: 0
+    });
   }
 };
