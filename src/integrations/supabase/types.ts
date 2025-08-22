@@ -64,6 +64,27 @@ export type Database = {
         }
         Relationships: []
       }
+      room_limits: {
+        Row: {
+          created_at: string | null
+          id: string
+          max_rooms: number
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          max_rooms?: number
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          max_rooms?: number
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       room_members: {
         Row: {
           id: string
@@ -101,6 +122,8 @@ export type Database = {
           position: number
           room_id: string
           updated_at: string
+          video_filename: string | null
+          video_type: string | null
           video_url: string | null
         }
         Insert: {
@@ -110,6 +133,8 @@ export type Database = {
           position?: number
           room_id: string
           updated_at?: string
+          video_filename?: string | null
+          video_type?: string | null
           video_url?: string | null
         }
         Update: {
@@ -119,6 +144,8 @@ export type Database = {
           position?: number
           room_id?: string
           updated_at?: string
+          video_filename?: string | null
+          video_type?: string | null
           video_url?: string | null
         }
         Relationships: [
@@ -135,6 +162,7 @@ export type Database = {
         Row: {
           capacity: number
           created_at: string
+          created_by: string | null
           enabled: boolean
           id: string
           name: string
@@ -142,6 +170,7 @@ export type Database = {
         Insert: {
           capacity?: number
           created_at?: string
+          created_by?: string | null
           enabled?: boolean
           id?: string
           name: string
@@ -149,9 +178,39 @@ export type Database = {
         Update: {
           capacity?: number
           created_at?: string
+          created_by?: string | null
           enabled?: boolean
           id?: string
           name?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "rooms_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+        ]
+      }
+      storage_buckets: {
+        Row: {
+          created_at: string | null
+          id: string
+          name: string
+          public: boolean | null
+        }
+        Insert: {
+          created_at?: string | null
+          id: string
+          name: string
+          public?: boolean | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          name?: string
+          public?: boolean | null
         }
         Relationships: []
       }
