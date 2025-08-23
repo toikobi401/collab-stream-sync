@@ -25,7 +25,7 @@ export default function Auth() {
   // Redirect if already authenticated
   useEffect(() => {
     if (auth.user && !auth.loading) {
-      navigate('/', { replace: true });
+      navigate('/rooms', { replace: true });
     }
   }, [auth.user, auth.loading, navigate]);
 
@@ -48,7 +48,7 @@ export default function Auth() {
         title: "Welcome back!",
         description: "You have been signed in successfully.",
       });
-      navigate('/', { replace: true });
+      navigate('/rooms', { replace: true });
     } catch (err: any) {
       setError(err.message || 'Failed to sign in');
     } finally {
