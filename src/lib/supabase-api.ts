@@ -9,44 +9,7 @@ export class SupabaseError extends Error {
 }
 
 export const supabaseApi = {
-  // Authentication - nickname only
-  signUpWithNickname: async (nickname: string) => {
-    // Use nickname as both email (with dummy domain) and password
-    const email = `${nickname}@${nickname}.local`;
-    const password = nickname;
-    
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: { nickname },
-        emailRedirectTo: `${window.location.origin}/`
-      }
-    });
-
-    if (error && error.message.includes('already been registered')) {
-      // If user exists, sign them in instead
-      return await supabaseApi.signInWithNickname(nickname);
-    }
-
-    if (error) throw new SupabaseError(error.name || 'SIGNUP_ERROR', error.message);
-    return data;
-  },
-
-  signInWithNickname: async (nickname: string) => {
-    const email = `${nickname}@${nickname}.local`;
-    const password = nickname;
-    
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password
-    });
-
-    if (error) throw new SupabaseError(error.name || 'SIGNIN_ERROR', error.message);
-    return data;
-  },
-
-  // Traditional authentication (kept for backward compatibility)
+  // Traditional authentication
   signUp: async (email: string, password: string, nickname: string) => {
     const redirectUrl = `${window.location.origin}/`;
     
