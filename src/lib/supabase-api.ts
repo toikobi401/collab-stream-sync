@@ -92,14 +92,31 @@ export const supabaseApi = {
 
   // Room Members
   joinRoom: async (roomId: string): Promise<void> => {
+    const userId = (await supabase.auth.getUser()).data.user?.id;
+    if (!userId) throw new SupabaseError('AUTH_ERROR', 'User not authenticated');
+
+    // Check if user is already a member
+    const { data: existingMember } = await supabase
+      .from('room_members')
+      .select('id')
+      .eq('room_id', roomId)
+      .eq('user_id', userId)
+      .single();
+
+    // If already a member, return successfully
+    if (existingMember) return;
+
     const { error } = await supabase
       .from('room_members')
       .insert({
         room_id: roomId,
-        user_id: (await supabase.auth.getUser()).data.user?.id
+        user_id: userId
       });
     
     if (error) {
+      // Handle duplicate key constraint (in case of race condition)
+      if (error.code === '23505') return;
+      
       if (error.message.includes('Room is full')) {
         throw new SupabaseError('ROOM_FULL', 'Room is full. Maximum capacity reached.');
       }
