@@ -130,9 +130,11 @@ export type Database = {
       }
       room_state: {
         Row: {
+          current_video_index: number | null
           host_user_id: string | null
           paused: boolean
           playback_rate: number
+          playlist_mode: boolean | null
           position: number
           room_id: string
           updated_at: string
@@ -141,9 +143,11 @@ export type Database = {
           video_url: string | null
         }
         Insert: {
+          current_video_index?: number | null
           host_user_id?: string | null
           paused?: boolean
           playback_rate?: number
+          playlist_mode?: boolean | null
           position?: number
           room_id: string
           updated_at?: string
@@ -152,9 +156,11 @@ export type Database = {
           video_url?: string | null
         }
         Update: {
+          current_video_index?: number | null
           host_user_id?: string | null
           paused?: boolean
           playback_rate?: number
+          playlist_mode?: boolean | null
           position?: number
           room_id?: string
           updated_at?: string
@@ -167,6 +173,50 @@ export type Database = {
             foreignKeyName: "room_state_room_id_fkey"
             columns: ["room_id"]
             isOneToOne: true
+            referencedRelation: "rooms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      room_videos: {
+        Row: {
+          duration: number | null
+          file_size: number
+          id: string
+          room_id: string
+          uploaded_at: string | null
+          uploaded_by: string
+          video_filename: string
+          video_order: number
+          video_url: string
+        }
+        Insert: {
+          duration?: number | null
+          file_size: number
+          id?: string
+          room_id: string
+          uploaded_at?: string | null
+          uploaded_by: string
+          video_filename: string
+          video_order?: number
+          video_url: string
+        }
+        Update: {
+          duration?: number | null
+          file_size?: number
+          id?: string
+          room_id?: string
+          uploaded_at?: string | null
+          uploaded_by?: string
+          video_filename?: string
+          video_order?: number
+          video_url?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "room_videos_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: false
             referencedRelation: "rooms"
             referencedColumns: ["id"]
           },

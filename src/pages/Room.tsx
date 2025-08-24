@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { LoadingScreen } from '@/components/ui/loading';
 import { VideoPlayer } from '@/components/VideoPlayer';
@@ -11,10 +11,13 @@ import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { supabaseApi } from '@/lib/supabase-api';
 import { supabase } from '@/integrations/supabase/client';
+import { RoomVideo } from '@/types';
 import { LogOut, Users } from 'lucide-react';
 
 export default function Room() {
   const [isLoading, setIsLoading] = useState(true);
+  const [roomVideos, setRoomVideos] = useState<RoomVideo[]>([]);
+  const [currentVideoIndex, setCurrentVideoIndex] = useState(1);
   
   const auth = useAuth();
   const user = useUser();
@@ -33,6 +36,8 @@ export default function Room() {
     setConnected,
     reset
   } = useStore();
+  
+  const { roomId } = useParams<{ roomId: string }>();
 
   // Redirect if not logged in
   useEffect(() => {
@@ -42,19 +47,58 @@ export default function Room() {
     }
   }, [auth.loading, user, navigate]);
 
+  // Load room videos
+  const loadRoomVideos = async () => {
+    if (!roomId) return;
+    try {
+      const videos = await supabaseApi.getRoomVideos(roomId);
+      setRoomVideos(videos);
+    } catch (error) {
+      console.error('Failed to load room videos:', error);
+    }
+  };
+
+  // Handle video switch
+  const handleVideoSwitch = async (index: number) => {
+    if (!roomId) return;
+    try {
+      await supabaseApi.switchToVideo(roomId, index);
+      setCurrentVideoIndex(index);
+    } catch (error: any) {
+      toast({
+        title: "Failed to switch video",
+        description: error.message,
+        variant: "destructive"
+      });
+    }
+  };
+
   // Initialize room data and real-time subscriptions
   useEffect(() => {
-    if (!user || !room) return;
+    if (!user || !roomId) return;
 
     const initializeRoom = async () => {
       try {
         setIsLoading(true);
         
-        // Load room state and members
-        const [roomState, members] = await Promise.all([
-          supabaseApi.getRoomState(room.id),
-          supabaseApi.getRoomMembers(room.id)
+        // Load room, room state, members, and videos
+        const [roomData, roomState, members] = await Promise.all([
+          supabaseApi.getRoomWithMembers(roomId),
+          supabaseApi.getRoomState(roomId),
+          supabaseApi.getRoomMembers(roomId)
         ]);
+        
+        if (!roomData) {
+          toast({
+            title: "Room not found",
+            description: "The room you're looking for doesn't exist",
+            variant: "destructive"
+          });
+          navigate('/rooms');
+          return;
+        }
+        
+        setRoom(roomData);
         
         // Set initial state
         if (roomState) {
@@ -70,13 +114,16 @@ export default function Room() {
             isHost: roomState.host_user_id === user.id,
             canBecomeHost: !roomState.host_user_id
           });
+          
+          setCurrentVideoIndex(roomState.current_video_index || 1);
         }
         
         setMembers(members);
+        await loadRoomVideos();
         setConnected(true);
         
         // Setup real-time subscriptions
-        const roomStateChannel = supabaseApi.subscribeToRoomState(room.id, (newState) => {
+        const roomStateChannel = supabaseApi.subscribeToRoomState(roomId, (newState) => {
           setVideoState({
             videoUrl: newState.video_url || undefined,
             paused: newState.paused,
@@ -89,94 +136,88 @@ export default function Room() {
             isHost: newState.host_user_id === user.id,
             canBecomeHost: !newState.host_user_id
           });
+          
+          setCurrentVideoIndex(newState.current_video_index || 1);
         });
         
-        const membersChannel = supabaseApi.subscribeToRoomMembers(room.id, (newMembers) => {
+        const membersChannel = supabaseApi.subscribeToRoomMembers(roomId, (newMembers) => {
           setMembers(newMembers);
         });
         
-        toast({
-          title: "Connected to room",
-          description: `Welcome to ${room.name}`,
-        });
-        
-        // Cleanup subscriptions
+        // Cleanup function
         return () => {
-          supabase.removeChannel(roomStateChannel);
-          supabase.removeChannel(membersChannel);
+          roomStateChannel?.unsubscribe();
+          membersChannel?.unsubscribe();
         };
         
-      } catch (error) {
+      } catch (error: any) {
         console.error('Room initialization error:', error);
         toast({
           title: "Failed to load room",
-          description: "Unable to connect to the room",
+          description: error.message || "Please try again",
           variant: "destructive"
         });
-        navigate('/join', { replace: true });
+        navigate('/rooms');
       } finally {
         setIsLoading(false);
       }
     };
 
-    const cleanup = initializeRoom();
-    
+    initializeRoom();
+  }, [user, roomId, navigate, toast, setRoom, setVideoState, setHostState, setMembers, setConnected]);
+
+  // Cleanup on unmount
+  useEffect(() => {
     return () => {
-      cleanup?.then(cleanupFn => cleanupFn?.());
       reset();
     };
-  }, [user, room]);
+  }, [reset]);
 
-
+  // Handle leaving room
   const handleLeaveRoom = async () => {
+    if (!roomId) return;
+    
     try {
-      if (room) {
-        await supabaseApi.leaveRoom(room.id);
-      }
-      
+      await supabaseApi.leaveRoom(roomId);
+      navigate('/rooms');
+    } catch (error: any) {
       toast({
-        title: "Left room",
-        description: "You have left the room",
+        title: "Failed to leave room",
+        description: error.message || "Please try again",
+        variant: "destructive"
       });
-      
-      navigate('/join', { replace: true });
-    } catch (error) {
-      console.error('Leave room error:', error);
-      navigate('/join', { replace: true });
     }
   };
 
-  if (!user || auth.loading) {
-    return <LoadingScreen message="Loading..." />;
-  }
-
-  if (isLoading) {
+  if (auth.loading || isLoading) {
     return <LoadingScreen message="Loading room..." />;
   }
 
+  if (!user) {
+    return <LoadingScreen message="Authenticating..." />;
+  }
+
   if (!room) {
-    return <LoadingScreen message="Room not found, redirecting..." />;
+    return <LoadingScreen message="Room not found..." />;
   }
 
   return (
-    <div className="min-h-screen p-4">
-      <div className="max-w-7xl mx-auto space-y-6">
+    <div className="min-h-screen bg-background">
+      <div className="container mx-auto p-6 space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <h1 className="text-2xl font-bold text-gradient-primary">
-              CollabStream Sync
-            </h1>
+            <h1 className="text-2xl font-bold">{room.name}</h1>
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Users className="w-4 h-4" />
-              <span>{room?.name || 'Room'}</span>
+              {room.currentMembers} members
             </div>
           </div>
-
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 text-sm">
               <div className={`w-2 h-2 rounded-full ${
-                connectionState.connected ? 'bg-success animate-pulse' : 'bg-destructive'
+                connectionState.connected ? 'bg-green-500' : 'bg-red-500'
               }`} />
               {connectionState.connected ? 'Connected' : 'Disconnected'}
             </div>
@@ -203,7 +244,13 @@ export default function Room() {
           <div className="space-y-6">
             <RoomInfo />
             <HostControls />
-            <VideoUpload />
+            <VideoUpload 
+              roomId={roomId!}
+              onVideoUploaded={loadRoomVideos}
+              videos={roomVideos}
+              onVideoSwitch={handleVideoSwitch}
+              currentIndex={currentVideoIndex}
+            />
           </div>
         </div>
       </div>

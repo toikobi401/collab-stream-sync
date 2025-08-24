@@ -1,210 +1,242 @@
-import { useState, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Upload, Link, Trash2, Play } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
-import { Alert, AlertDescription } from '@/components/ui/alert';
-import { useToast } from '@/hooks/use-toast';
+import { useToast } from '@/components/ui/use-toast';
 import { supabaseApi } from '@/lib/supabase-api';
-import { useRoom, useHostState } from '@/store';
-import { Upload, Link, Film, AlertCircle } from 'lucide-react';
+import { RoomVideo } from '@/types';
 
-export const VideoUpload = () => {
-  const [uploading, setUploading] = useState(false);
+interface VideoUploadProps {
+  roomId: string;
+  onVideoUploaded: () => void;
+  videos: RoomVideo[];
+  onVideoSwitch: (index: number) => void;
+  currentIndex?: number;
+}
+
+export const VideoUpload: React.FC<VideoUploadProps> = ({ 
+  roomId, 
+  onVideoUploaded, 
+  videos, 
+  onVideoSwitch,
+  currentIndex = 1 
+}) => {
+  const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [videoUrl, setVideoUrl] = useState('');
-  const [loadingUrl, setLoadingUrl] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  
+  const [urlInput, setUrlInput] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const room = useRoom();
-  const hostState = useHostState();
   const { toast } = useToast();
 
-  if (!room || !hostState.isHost) {
-    return null;
-  }
+  const handleFileUpload = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
 
-  const handleFileUpload = async (file: File) => {
-    if (!file) return;
+    const fileArray = Array.from(files);
+    const remainingSlots = 5 - videos.length;
+    
+    if (fileArray.length > remainingSlots) {
+      toast({
+        title: "Too many files",
+        description: `Can only upload ${remainingSlots} more video(s). Maximum 5 videos per room.`,
+        variant: "destructive"
+      });
+      return;
+    }
 
-    setUploading(true);
+    // Check total size
+    const totalSize = fileArray.reduce((sum, file) => sum + file.size, 0);
+    const currentTotalSize = videos.reduce((sum, video) => sum + video.file_size, 0);
+    const maxSize = 10 * 1024 * 1024 * 1024; // 10GB
+    
+    if (currentTotalSize + totalSize > maxSize) {
+      toast({
+        title: "File size limit exceeded",
+        description: "Total video size would exceed 10GB limit for this room",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    setIsUploading(true);
     setUploadProgress(0);
-    setError(null);
 
     try {
-      // Simulate upload progress
-      const progressInterval = setInterval(() => {
-        setUploadProgress(prev => Math.min(prev + 10, 90));
-      }, 200);
-
-      const videoUrl = await supabaseApi.uploadVideo(room.id, file);
-      
-      clearInterval(progressInterval);
-      setUploadProgress(100);
+      if (fileArray.length === 1) {
+        await supabaseApi.uploadVideo(roomId, fileArray[0]);
+      } else {
+        await supabaseApi.uploadMultipleVideos(roomId, fileArray);
+      }
       
       toast({
-        title: "Video uploaded!",
-        description: `${file.name} is now ready for streaming`,
+        title: "Upload successful",
+        description: `${fileArray.length} video(s) uploaded successfully`,
       });
-
-      // Reset after a short delay
-      setTimeout(() => {
-        setUploadProgress(0);
-        setUploading(false);
-      }, 1000);
-
+      onVideoUploaded();
     } catch (error: any) {
-      console.error('Upload error:', error);
-      setError(error.message || 'Failed to upload video');
-      setUploading(false);
-      setUploadProgress(0);
-    }
-  };
-
-  const handleUrlLoad = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!videoUrl.trim()) return;
-
-    setLoadingUrl(true);
-    setError(null);
-
-    try {
-      await supabaseApi.loadVideoFromUrl(room.id, videoUrl.trim());
-      
       toast({
-        title: "Video loaded!",
-        description: "Video URL has been set for the room",
+        title: "Upload failed",
+        description: error.message || "Failed to upload video",
+        variant: "destructive"
       });
-
-      setVideoUrl('');
-    } catch (error: any) {
-      console.error('URL load error:', error);
-      setError(error.message || 'Failed to load video URL');
     } finally {
-      setLoadingUrl(false);
+      setIsUploading(false);
+      setUploadProgress(0);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
   };
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      handleFileUpload(file);
+  const handleUrlLoad = async () => {
+    if (!urlInput.trim()) return;
+
+    try {
+      await supabaseApi.loadVideoFromUrl(roomId, urlInput.trim());
+      toast({
+        title: "Video loaded",
+        description: "Video URL loaded successfully",
+      });
+      setUrlInput('');
+      onVideoUploaded();
+    } catch (error: any) {
+      toast({
+        title: "Failed to load video",
+        description: error.message || "Invalid video URL",
+        variant: "destructive"
+      });
     }
   };
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    const file = e.dataTransfer.files?.[0];
-    if (file) {
-      handleFileUpload(file);
+  const handleDeleteVideo = async (videoId: string) => {
+    try {
+      await supabaseApi.deleteRoomVideo(videoId);
+      toast({
+        title: "Video deleted",
+        description: "Video removed from playlist",
+      });
+      onVideoUploaded();
+    } catch (error: any) {
+      toast({
+        title: "Delete failed",
+        description: error.message || "Failed to delete video",
+        variant: "destructive"
+      });
     }
   };
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
+  const formatFileSize = (bytes: number) => {
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    if (bytes === 0) return '0 Bytes';
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
   };
+
+  const totalSize = videos.reduce((sum, video) => sum + video.file_size, 0);
+  const maxSize = 10 * 1024 * 1024 * 1024; // 10GB
+  const usagePercentage = (totalSize / maxSize) * 100;
 
   return (
-    <Card className="border-primary/20">
+    <Card className="w-full">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
-          <Film className="h-5 w-5 text-primary" />
-          Video Management
+          <Upload className="h-5 w-5" />
+          Video Playlist ({videos.length}/5)
         </CardTitle>
-        <CardDescription>
-          Upload a video file or load from URL (Host only)
-        </CardDescription>
-      </CardHeader>
-
-      <CardContent className="space-y-6">
-        {error && (
-          <Alert variant="destructive">
-            <AlertCircle className="h-4 w-4" />
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
-
-        {/* File Upload */}
-        <div className="space-y-3">
-          <h4 className="font-medium flex items-center gap-2">
-            <Upload className="h-4 w-4" />
-            Upload Video File
-          </h4>
-          
-          <div
-            className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
-              uploading ? 'border-primary bg-primary/5' : 'border-muted-foreground/25 hover:border-primary/50'
-            }`}
-            onDrop={handleDrop}
-            onDragOver={handleDragOver}
-          >
-            {uploading ? (
-              <div className="space-y-3">
-                <div className="text-sm text-muted-foreground">
-                  Uploading video...
-                </div>
-                <Progress value={uploadProgress} className="w-full" />
-                <div className="text-xs text-muted-foreground">
-                  {uploadProgress}% complete
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <Upload className="h-8 w-8 mx-auto text-muted-foreground" />
-                <div className="space-y-1">
-                  <p className="text-sm font-medium">
-                    Drop video file here or click to browse
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Supports MP4 and HLS (.m3u8) files up to 200MB
-                  </p>
-                </div>
-                <Button
-                  variant="outline"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploading}
-                >
-                  <Upload className="h-4 w-4 mr-2" />
-                  Select File
-                </Button>
-              </div>
-            )}
+        <div className="space-y-2">
+          <div className="flex justify-between text-sm text-muted-foreground">
+            <span>Storage Used</span>
+            <span>{formatFileSize(totalSize)} / 10GB</span>
           </div>
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="video/mp4,.m3u8"
-            onChange={handleFileSelect}
-            className="hidden"
-          />
+          <Progress value={usagePercentage} className="h-2" />
         </div>
-
-        {/* URL Input */}
-        <div className="space-y-3">
-          <h4 className="font-medium flex items-center gap-2">
-            <Link className="h-4 w-4" />
-            Load from URL
-          </h4>
-          
-          <form onSubmit={handleUrlLoad} className="space-y-3">
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Upload Section */}
+        <div className="space-y-4">
+          <div>
             <Input
-              type="url"
-              placeholder="https://example.com/video.mp4"
-              value={videoUrl}
-              onChange={(e) => setVideoUrl(e.target.value)}
-              disabled={loadingUrl}
+              ref={fileInputRef}
+              type="file"
+              accept="video/*"
+              multiple
+              onChange={(e) => handleFileUpload(e.target.files)}
+              disabled={isUploading || videos.length >= 5}
+              className="hidden"
+              id="video-upload"
             />
             <Button 
-              type="submit" 
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploading || videos.length >= 5}
               className="w-full"
-              disabled={loadingUrl || !videoUrl.trim()}
             >
-              {loadingUrl ? "Loading..." : "Load Video URL"}
+              <Upload className="mr-2 h-4 w-4" />
+              {videos.length >= 5 ? 'Maximum Videos Reached' : 'Upload Video(s)'}
             </Button>
-          </form>
+          </div>
+
+          <div className="flex gap-2">
+            <Input
+              placeholder="Or paste video URL..."
+              value={urlInput}
+              onChange={(e) => setUrlInput(e.target.value)}
+              disabled={isUploading}
+            />
+            <Button 
+              onClick={handleUrlLoad}
+              disabled={isUploading || !urlInput.trim()}
+            >
+              <Link className="h-4 w-4" />
+            </Button>
+          </div>
+
+          {isUploading && (
+            <div className="space-y-2">
+              <Progress value={uploadProgress} />
+              <p className="text-sm text-muted-foreground text-center">
+                Uploading video...
+              </p>
+            </div>
+          )}
         </div>
+
+        {/* Playlist */}
+        {videos.length > 0 && (
+          <div className="space-y-2">
+            <h4 className="font-medium">Playlist</h4>
+            <div className="space-y-2 max-h-60 overflow-y-auto">
+              {videos.map((video, index) => (
+                <div 
+                  key={video.id} 
+                  className={`flex items-center gap-2 p-2 rounded border ${
+                    currentIndex === index + 1 ? 'bg-primary/10 border-primary' : ''
+                  }`}
+                >
+                  <Button
+                    size="sm"
+                    variant={currentIndex === index + 1 ? "default" : "outline"}
+                    onClick={() => onVideoSwitch(index + 1)}
+                  >
+                    <Play className="h-3 w-3" />
+                  </Button>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{video.video_filename}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatFileSize(video.file_size)}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => handleDeleteVideo(video.id)}
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

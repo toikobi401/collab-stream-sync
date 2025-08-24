@@ -294,20 +294,15 @@ export const supabaseApi = {
   },
 
   // File Upload
+  // Video Management
   uploadVideo: async (roomId: string, file: File): Promise<string> => {
     const user = (await supabase.auth.getUser()).data.user;
     if (!user) throw new SupabaseError('AUTH_ERROR', 'Not authenticated');
 
-    // Validate file
-    const maxSize = 200 * 1024 * 1024; // 200MB
-    const allowedTypes = ['video/mp4', 'application/x-mpegURL'];
-    
-    if (file.size > maxSize) {
-      throw new SupabaseError('FILE_SIZE_ERROR', 'File size exceeds 200MB limit');
-    }
-    
-    if (!allowedTypes.includes(file.type) && !file.name.endsWith('.m3u8')) {
-      throw new SupabaseError('FILE_TYPE_ERROR', 'Only MP4 and HLS (.m3u8) files are allowed');
+    // Validate file type
+    const allowedTypes = ['video/mp4', 'video/webm', 'video/ogg', 'application/x-mpegURL'];
+    if (!allowedTypes.includes(file.type) && !file.name.match(/\.(mp4|webm|ogg|m3u8)$/)) {
+      throw new SupabaseError('FILE_TYPE_ERROR', 'Only video files (MP4, WebM, OGG, HLS) are allowed');
     }
 
     // Upload to storage
@@ -328,16 +323,125 @@ export const supabaseApi = {
 
     const videoUrl = urlData.publicUrl;
 
-    // Update room state with new video
-    await supabaseApi.updateRoomState(roomId, {
-      video_url: videoUrl,
-      video_filename: file.name,
-      video_type: 'upload',
-      paused: true,
-      position: 0
-    });
+    // Get current video count for order
+    const { data: existingVideos } = await supabase
+      .from('room_videos')
+      .select('video_order')
+      .eq('room_id', roomId)
+      .order('video_order', { ascending: false })
+      .limit(1);
+    
+    const nextOrder = existingVideos && existingVideos.length > 0 
+      ? existingVideos[0].video_order + 1 
+      : 1;
+    
+    // Add video to room_videos table
+    const { error: dbError } = await supabase
+      .from('room_videos')
+      .insert({
+        room_id: roomId,
+        video_url: videoUrl,
+        video_filename: file.name,
+        file_size: file.size,
+        video_order: nextOrder,
+        uploaded_by: user.id
+      });
+    
+    if (dbError) throw new SupabaseError('DB_ERROR', dbError.message);
+
+    // Update room state to use first video if this is the first upload
+    if (nextOrder === 1) {
+      await supabaseApi.updateRoomState(roomId, {
+        video_url: videoUrl,
+        video_filename: file.name,
+        video_type: 'upload',
+        playlist_mode: true,
+        current_video_index: 1,
+        paused: true,
+        position: 0
+      });
+    }
 
     return videoUrl;
+  },
+
+  uploadMultipleVideos: async (roomId: string, files: File[]): Promise<string[]> => {
+    if (files.length > 5) {
+      throw new SupabaseError('TOO_MANY_FILES', 'Maximum 5 videos allowed per room');
+    }
+    
+    const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+    const maxSize = 10 * 1024 * 1024 * 1024; // 10GB
+    
+    if (totalSize > maxSize) {
+      throw new SupabaseError('FILE_TOO_LARGE', 'Total file size exceeds 10GB limit');
+    }
+    
+    const uploadPromises = files.map(file => supabaseApi.uploadVideo(roomId, file));
+    return Promise.all(uploadPromises);
+  },
+
+  getRoomVideos: async (roomId: string): Promise<any[]> => {
+    const { data, error } = await supabase
+      .from('room_videos')
+      .select('*')
+      .eq('room_id', roomId)
+      .order('video_order');
+    
+    if (error) throw new SupabaseError('FETCH_ERROR', error.message);
+    return data || [];
+  },
+
+  deleteRoomVideo: async (videoId: string): Promise<void> => {
+    // Get video info first
+    const { data: video, error: fetchError } = await supabase
+      .from('room_videos')
+      .select('video_url, room_id')
+      .eq('id', videoId)
+      .single();
+    
+    if (fetchError) throw new SupabaseError('FETCH_ERROR', fetchError.message);
+    
+    // Delete from storage
+    const fileName = video.video_url.split('/').pop();
+    if (fileName) {
+      await supabase.storage
+        .from('room-videos')
+        .remove([fileName]);
+    }
+    
+    // Delete from database
+    const { error: deleteError } = await supabase
+      .from('room_videos')
+      .delete()
+      .eq('id', videoId);
+    
+    if (deleteError) throw new SupabaseError('DELETE_ERROR', deleteError.message);
+  },
+
+  switchToVideo: async (roomId: string, videoIndex: number): Promise<void> => {
+    const { data: videos } = await supabase
+      .from('room_videos')
+      .select('*')
+      .eq('room_id', roomId)
+      .order('video_order');
+    
+    if (!videos || videos.length === 0) {
+      throw new SupabaseError('NO_VIDEOS', 'No videos found in this room');
+    }
+    
+    const video = videos[videoIndex - 1];
+    if (!video) {
+      throw new SupabaseError('INVALID_INDEX', 'Video index out of range');
+    }
+    
+    await supabaseApi.updateRoomState(roomId, {
+      video_url: video.video_url,
+      video_filename: video.video_filename,
+      current_video_index: videoIndex,
+      position: 0,
+      paused: true
+    });
   },
 
   loadVideoFromUrl: async (roomId: string, url: string): Promise<void> => {
@@ -356,6 +460,7 @@ export const supabaseApi = {
       video_url: url,
       video_filename: null,
       video_type: 'url',
+      playlist_mode: false,
       paused: true,
       position: 0
     });

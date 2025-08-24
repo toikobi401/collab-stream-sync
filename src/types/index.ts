@@ -44,6 +44,20 @@ export interface RoomState {
   playback_rate: number;
   host_user_id?: string;
   updated_at: string;
+  current_video_index?: number;
+  playlist_mode?: boolean;
+}
+
+export interface RoomVideo {
+  id: string;
+  room_id: string;
+  video_url: string;
+  video_filename: string;
+  file_size: number;
+  duration?: number;
+  video_order: number;
+  uploaded_by: string;
+  uploaded_at: string;
 }
 
 export interface VideoState {
