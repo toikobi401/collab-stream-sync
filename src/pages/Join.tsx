@@ -23,10 +23,10 @@ export default function Join() {
   const auth = useAuth();
   const { setRoom } = useStore();
 
-  // Redirect if already authenticated
+  // Redirect authenticated users to rooms list
   useEffect(() => {
     if (!auth.loading && auth.user) {
-      navigate('/room', { replace: true });
+      navigate('/rooms', { replace: true });
     }
   }, [auth.loading, auth.user, navigate]);
 
@@ -67,7 +67,7 @@ export default function Join() {
           description: `Logged in as ${nickname.trim()}`,
         });
         
-        navigate('/room');
+        navigate('/rooms');
       }
     } catch (error: any) {
       console.error('Join error:', error);

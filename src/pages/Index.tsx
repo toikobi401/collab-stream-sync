@@ -12,10 +12,10 @@ export default function Index() {
   const navigate = useNavigate();
   const auth = useAuth();
 
-  // Redirect authenticated users to the room
+  // Redirect authenticated users to the rooms list
   useEffect(() => {
     if (!auth.loading && auth.user) {
-      navigate('/room', { replace: true });
+      navigate('/rooms', { replace: true });
     }
   }, [auth.loading, auth.user, navigate]);
 

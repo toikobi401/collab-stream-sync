@@ -106,6 +106,20 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "fk_room_members_profiles"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+          {
+            foreignKeyName: "fk_room_members_rooms"
+            columns: ["room_id"]
+            isOneToOne: false
+            referencedRelation: "rooms"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "room_members_room_id_fkey"
             columns: ["room_id"]
             isOneToOne: false
@@ -222,6 +236,12 @@ export type Database = {
       claim_host: {
         Args: { room_id_param: string }
         Returns: boolean
+      }
+      get_user_room_membership: {
+        Args: { _user_id: string }
+        Returns: {
+          room_id: string
+        }[]
       }
       has_role: {
         Args: {
