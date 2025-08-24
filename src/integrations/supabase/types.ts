@@ -207,6 +207,30 @@ export type Database = {
           },
         ]
       }
+      security_config: {
+        Row: {
+          created_at: string | null
+          dashboard_location: string | null
+          id: string
+          required_action: string
+          setting_name: string
+        }
+        Insert: {
+          created_at?: string | null
+          dashboard_location?: string | null
+          id?: string
+          required_action: string
+          setting_name: string
+        }
+        Update: {
+          created_at?: string | null
+          dashboard_location?: string | null
+          id?: string
+          required_action?: string
+          setting_name?: string
+        }
+        Relationships: []
+      }
       user_roles: {
         Row: {
           created_at: string
