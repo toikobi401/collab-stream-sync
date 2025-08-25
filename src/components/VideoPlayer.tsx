@@ -37,23 +37,14 @@ export function VideoPlayer() {
 
   // Calculate server time sync
   const syncServerTime = useCallback(async () => {
-    const clientTime = Date.now();
-    try {
-      const response = await fetch('https://worldtimeapi.org/api/timezone/Etc/UTC');
-      const data = await response.json();
-      const serverTime = new Date(data.datetime).getTime();
-      const rtt = Date.now() - clientTime;
-      const offset = serverTime - clientTime + (rtt / 2);
-      
-      setServerTimeOffset(offset);
-      setConnectionState({ 
-        rtt, 
-        offset,
-        lastSync: Date.now() 
-      });
-    } catch (error) {
-      console.warn('Failed to sync server time, using local time');
-    }
+    // Use local time since external API is not accessible in sandbox
+    const currentTime = Date.now();
+    setServerTimeOffset(0); // No offset needed for local time
+    setConnectionState({ 
+      rtt: 0, 
+      offset: 0,
+      lastSync: currentTime 
+    });
   }, [setConnectionState]);
 
   // Sync time periodically
@@ -63,31 +54,26 @@ export function VideoPlayer() {
     return () => clearInterval(interval);
   }, [syncServerTime]);
 
-  // Calculate drift between local and server video position
+  // Calculate simple drift between local and server video position
   const calculateDrift = useCallback(() => {
-    if (!playerRef.current || !videoState.lastUpdated) return;
-    
-    const currentTime = Date.now() + serverTimeOffset;
-    const timeSinceUpdate = (currentTime - videoState.lastUpdated) / 1000;
-    const expectedPosition = videoState.paused ? 
-      videoState.position : 
-      videoState.position + (timeSinceUpdate * (videoState.playbackRate || 1));
+    if (!playerRef.current?.getCurrentTime) return;
     
     const actualPosition = playerRef.current.getCurrentTime();
+    const expectedPosition = videoState.position;
     const drift = Math.abs(expectedPosition - actualPosition) * 1000; // ms
     
     updateDrift(drift);
     
     // Auto-sync if drift is too high
-    if (drift > 2000 && !hostState.isHost && !isSeeking) {
+    if (drift > 2000 && !hostState.isHost && !isSeeking && playerRef.current.seekTo) {
       playerRef.current.seekTo(expectedPosition, 'seconds');
       setLocalTime(expectedPosition);
     }
-  }, [videoState, serverTimeOffset, hostState.isHost, isSeeking, updateDrift]);
+  }, [videoState.position, hostState.isHost, isSeeking, updateDrift]);
 
-  // Monitor drift every second
+  // Monitor drift every 3 seconds
   useEffect(() => {
-    const interval = setInterval(calculateDrift, 1000);
+    const interval = setInterval(calculateDrift, 3000);
     return () => clearInterval(interval);
   }, [calculateDrift]);
 
@@ -100,8 +86,7 @@ export function VideoPlayer() {
       // Host broadcasts position updates every 5 seconds
       if (hostState.isHost && room && Date.now() - lastSyncTime > 5000) {
         supabaseApi.updateRoomState(room.id, {
-          position: state.playedSeconds,
-          lastUpdated: Date.now() + serverTimeOffset
+          position: state.playedSeconds
         }).catch(console.error);
         setLastSyncTime(Date.now());
       }
@@ -113,11 +98,11 @@ export function VideoPlayer() {
     if (!hostState.isHost || !room) return;
     
     try {
-      const currentPos = playerRef.current?.getCurrentTime() || localTime;
+      const currentPos = playerRef.current?.getCurrentTime ? 
+        playerRef.current.getCurrentTime() : localTime;
       await supabaseApi.updateRoomState(room.id, {
         paused: !videoState.paused,
-        position: currentPos,
-        lastUpdated: Date.now() + serverTimeOffset
+        position: currentPos
       });
     } catch (error: any) {
       toast({
@@ -136,8 +121,7 @@ export function VideoPlayer() {
     
     try {
       await supabaseApi.updateRoomState(room.id, {
-        position: newTime,
-        lastUpdated: Date.now() + serverTimeOffset
+        position: newTime
       });
     } catch (error: any) {
       toast({
@@ -151,7 +135,7 @@ export function VideoPlayer() {
   };
 
   const handleSkip = async (seconds: number) => {
-    if (!hostState.isHost || !playerRef.current || !room) return;
+    if (!hostState.isHost || !playerRef.current?.getCurrentTime || !room) return;
     
     const currentTime = playerRef.current.getCurrentTime();
     const newTime = Math.max(0, Math.min(duration, currentTime + seconds));
@@ -160,44 +144,32 @@ export function VideoPlayer() {
 
   const handleSyncNow = () => {
     if (playerRef.current && videoState.position !== undefined) {
-      // Calculate expected position based on server time
-      const currentTime = Date.now() + serverTimeOffset;
-      const timeSinceUpdate = videoState.lastUpdated ? 
-        (currentTime - videoState.lastUpdated) / 1000 : 0;
+      // Use current server position without time calculation
+      const expectedPosition = videoState.position;
       
-      const expectedPosition = videoState.paused ? 
-        videoState.position : 
-        videoState.position + (timeSinceUpdate * (videoState.playbackRate || 1));
-      
-      playerRef.current.seekTo(expectedPosition, 'seconds');
-      setLocalTime(expectedPosition);
-      updateVideoTime(expectedPosition);
-      
-      toast({
-        title: "Synced",
-        description: "Video synchronized with server"
-      });
+      if (playerRef.current.seekTo) {
+        playerRef.current.seekTo(expectedPosition, 'seconds');
+        setLocalTime(expectedPosition);
+        updateVideoTime(expectedPosition);
+        
+        toast({
+          title: "Synced",
+          description: "Video synchronized with server"
+        });
+      }
     }
   };
 
   // Sync video state when it changes
   useEffect(() => {
-    if (playerRef.current && !isSeeking && !hostState.isHost) {
-      const currentTime = Date.now() + serverTimeOffset;
-      const timeSinceUpdate = videoState.lastUpdated ? 
-        (currentTime - videoState.lastUpdated) / 1000 : 0;
-      
-      const expectedPosition = videoState.paused ? 
-        videoState.position : 
-        videoState.position + (timeSinceUpdate * (videoState.playbackRate || 1));
-      
-      const timeDiff = Math.abs(localTime - expectedPosition);
+    if (playerRef.current && !isSeeking && !hostState.isHost && playerRef.current.seekTo) {
+      const timeDiff = Math.abs(localTime - videoState.position);
       if (timeDiff > 1) {
-        playerRef.current.seekTo(expectedPosition, 'seconds');
-        setLocalTime(expectedPosition);
+        playerRef.current.seekTo(videoState.position, 'seconds');
+        setLocalTime(videoState.position);
       }
     }
-  }, [videoState.position, videoState.lastUpdated, localTime, isSeeking, hostState.isHost, serverTimeOffset]);
+  }, [videoState.position, localTime, isSeeking, hostState.isHost]);
 
   if (!videoState.videoUrl) {
     return (
@@ -235,26 +207,28 @@ export function VideoPlayer() {
             onProgress: handleProgress,
             onDuration: setDuration,
             onReady: () => {
-              if (playerRef.current && videoState.position !== undefined) {
+              if (playerRef.current && videoState.position !== undefined && playerRef.current.seekTo) {
                 playerRef.current.seekTo(videoState.position, 'seconds');
                 setLocalTime(videoState.position);
               }
             },
             onPause: () => {
               if (hostState.isHost && room) {
+                const currentPos = playerRef.current?.getCurrentTime ? 
+                  playerRef.current.getCurrentTime() : localTime;
                 supabaseApi.updateRoomState(room.id, {
                   paused: true,
-                  position: playerRef.current?.getCurrentTime() || localTime,
-                  lastUpdated: Date.now() + serverTimeOffset
+                  position: currentPos
                 }).catch(console.error);
               }
             },
             onPlay: () => {
               if (hostState.isHost && room) {
+                const currentPos = playerRef.current?.getCurrentTime ? 
+                  playerRef.current.getCurrentTime() : localTime;
                 supabaseApi.updateRoomState(room.id, {
                   paused: false,
-                  position: playerRef.current?.getCurrentTime() || localTime,
-                  lastUpdated: Date.now() + serverTimeOffset
+                  position: currentPos
                 }).catch(console.error);
               }
             }
@@ -401,8 +375,7 @@ export function VideoPlayer() {
                   onClick={async () => {
                     if (room) {
                       await supabaseApi.updateRoomState(room.id, {
-                        playback_rate: rate,
-                        lastUpdated: Date.now() + serverTimeOffset
+                        playback_rate: rate
                       });
                     }
                   }}
