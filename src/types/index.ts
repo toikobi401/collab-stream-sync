@@ -46,6 +46,7 @@ export interface RoomState {
   updated_at: string;
   current_video_index?: number;
   playlist_mode?: boolean;
+  lastUpdated?: number;
 }
 
 export interface RoomVideo {
@@ -62,11 +63,12 @@ export interface RoomVideo {
 
 export interface VideoState {
   videoUrl?: string | null;
+  videoFilename?: string | null;
   paused: boolean;
   position: number;
   playbackRate: number;
   hostId?: string | null;
-  lastUpdate?: number;
+  lastUpdated?: number;
 }
 
 export interface ConnectionState {

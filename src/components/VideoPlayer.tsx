@@ -6,8 +6,9 @@ import { Slider } from '@/components/ui/slider';
 import { Badge } from '@/components/ui/badge';
 import { useStore, useVideoState, useHostState, useConnectionState } from '@/store';
 import { supabaseApi } from '@/lib/supabase-api';
-import { Play, Pause, RotateCcw, Volume2 } from 'lucide-react';
+import { Play, Pause, RotateCcw, Volume2, SkipForward, SkipBack } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useToast } from '@/components/ui/use-toast';
 
 interface PlayerRef {
   seekTo: (seconds: number, type?: 'seconds' | 'fraction') => void;
@@ -21,76 +22,182 @@ export function VideoPlayer() {
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(0.8);
   const [isSeeking, setIsSeeking] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState(0);
+  const [serverTimeOffset, setServerTimeOffset] = useState(0);
   
   const videoState = useVideoState();
   const hostState = useHostState();
   const connectionState = useConnectionState();
+  const room = useStore(state => state.room);
+  const { toast } = useToast();
+  
   const updateVideoTime = useStore(state => state.updateVideoTime);
   const updateDrift = useStore(state => state.updateDrift);
+  const setConnectionState = useStore(state => state.setConnectionState);
 
-  // Update local time
+  // Calculate server time sync
+  const syncServerTime = useCallback(async () => {
+    const clientTime = Date.now();
+    try {
+      const response = await fetch('https://worldtimeapi.org/api/timezone/Etc/UTC');
+      const data = await response.json();
+      const serverTime = new Date(data.datetime).getTime();
+      const rtt = Date.now() - clientTime;
+      const offset = serverTime - clientTime + (rtt / 2);
+      
+      setServerTimeOffset(offset);
+      setConnectionState({ 
+        rtt, 
+        offset,
+        lastSync: Date.now() 
+      });
+    } catch (error) {
+      console.warn('Failed to sync server time, using local time');
+    }
+  }, [setConnectionState]);
+
+  // Sync time periodically
+  useEffect(() => {
+    syncServerTime();
+    const interval = setInterval(syncServerTime, 30000); // Sync every 30 seconds
+    return () => clearInterval(interval);
+  }, [syncServerTime]);
+
+  // Calculate drift between local and server video position
+  const calculateDrift = useCallback(() => {
+    if (!playerRef.current || !videoState.lastUpdated) return;
+    
+    const currentTime = Date.now() + serverTimeOffset;
+    const timeSinceUpdate = (currentTime - videoState.lastUpdated) / 1000;
+    const expectedPosition = videoState.paused ? 
+      videoState.position : 
+      videoState.position + (timeSinceUpdate * (videoState.playbackRate || 1));
+    
+    const actualPosition = playerRef.current.getCurrentTime();
+    const drift = Math.abs(expectedPosition - actualPosition) * 1000; // ms
+    
+    updateDrift(drift);
+    
+    // Auto-sync if drift is too high
+    if (drift > 2000 && !hostState.isHost && !isSeeking) {
+      playerRef.current.seekTo(expectedPosition, 'seconds');
+      setLocalTime(expectedPosition);
+    }
+  }, [videoState, serverTimeOffset, hostState.isHost, isSeeking, updateDrift]);
+
+  // Monitor drift every second
+  useEffect(() => {
+    const interval = setInterval(calculateDrift, 1000);
+    return () => clearInterval(interval);
+  }, [calculateDrift]);
+
+  // Update local time and sync
   const handleProgress = useCallback((state: { playedSeconds: number }) => {
     if (!isSeeking) {
       setLocalTime(state.playedSeconds);
       updateVideoTime(state.playedSeconds);
+      
+      // Host broadcasts position updates every 5 seconds
+      if (hostState.isHost && room && Date.now() - lastSyncTime > 5000) {
+        supabaseApi.updateRoomState(room.id, {
+          position: state.playedSeconds,
+          lastUpdated: Date.now() + serverTimeOffset
+        }).catch(console.error);
+        setLastSyncTime(Date.now());
+      }
     }
-  }, [isSeeking, updateVideoTime]);
+  }, [isSeeking, updateVideoTime, hostState.isHost, room, lastSyncTime, serverTimeOffset]);
 
   // Host controls
   const handlePlayPause = async () => {
-    if (!hostState.isHost || !useStore.getState().room) return;
-    
-    const room = useStore.getState().room;
-    if (!room) return;
+    if (!hostState.isHost || !room) return;
     
     try {
+      const currentPos = playerRef.current?.getCurrentTime() || localTime;
       await supabaseApi.updateRoomState(room.id, {
         paused: !videoState.paused,
-        position: localTime
+        position: currentPos,
+        lastUpdated: Date.now() + serverTimeOffset
       });
-    } catch (error) {
-      console.error('Play/pause error:', error);
+    } catch (error: any) {
+      toast({
+        title: "Control error",
+        description: error.message,
+        variant: "destructive"
+      });
     }
   };
 
   const handleSeek = async (newTime: number) => {
-    if (!hostState.isHost || !useStore.getState().room) return;
-    
-    const room = useStore.getState().room;
-    if (!room) return;
+    if (!hostState.isHost || !room) return;
     
     setIsSeeking(true);
     setLocalTime(newTime);
     
     try {
       await supabaseApi.updateRoomState(room.id, {
-        position: newTime
+        position: newTime,
+        lastUpdated: Date.now() + serverTimeOffset
       });
-    } catch (error) {
-      console.error('Seek error:', error);
+    } catch (error: any) {
+      toast({
+        title: "Seek error", 
+        description: error.message,
+        variant: "destructive"
+      });
     }
     
     setTimeout(() => setIsSeeking(false), 100);
   };
 
+  const handleSkip = async (seconds: number) => {
+    if (!hostState.isHost || !playerRef.current || !room) return;
+    
+    const currentTime = playerRef.current.getCurrentTime();
+    const newTime = Math.max(0, Math.min(duration, currentTime + seconds));
+    await handleSeek(newTime);
+  };
+
   const handleSyncNow = () => {
-    if (playerRef.current) {
-      playerRef.current.seekTo(videoState.position, 'seconds');
-      setLocalTime(videoState.position);
-      updateVideoTime(videoState.position);
+    if (playerRef.current && videoState.position !== undefined) {
+      // Calculate expected position based on server time
+      const currentTime = Date.now() + serverTimeOffset;
+      const timeSinceUpdate = videoState.lastUpdated ? 
+        (currentTime - videoState.lastUpdated) / 1000 : 0;
+      
+      const expectedPosition = videoState.paused ? 
+        videoState.position : 
+        videoState.position + (timeSinceUpdate * (videoState.playbackRate || 1));
+      
+      playerRef.current.seekTo(expectedPosition, 'seconds');
+      setLocalTime(expectedPosition);
+      updateVideoTime(expectedPosition);
+      
+      toast({
+        title: "Synced",
+        description: "Video synchronized with server"
+      });
     }
   };
 
   // Sync video state when it changes
   useEffect(() => {
-    if (playerRef.current && !isSeeking) {
-      const timeDiff = Math.abs(localTime - videoState.position);
+    if (playerRef.current && !isSeeking && !hostState.isHost) {
+      const currentTime = Date.now() + serverTimeOffset;
+      const timeSinceUpdate = videoState.lastUpdated ? 
+        (currentTime - videoState.lastUpdated) / 1000 : 0;
+      
+      const expectedPosition = videoState.paused ? 
+        videoState.position : 
+        videoState.position + (timeSinceUpdate * (videoState.playbackRate || 1));
+      
+      const timeDiff = Math.abs(localTime - expectedPosition);
       if (timeDiff > 1) {
-        playerRef.current.seekTo(videoState.position, 'seconds');
-        setLocalTime(videoState.position);
+        playerRef.current.seekTo(expectedPosition, 'seconds');
+        setLocalTime(expectedPosition);
       }
     }
-  }, [videoState.position, localTime, isSeeking]);
+  }, [videoState.position, videoState.lastUpdated, localTime, isSeeking, hostState.isHost, serverTimeOffset]);
 
   if (!videoState.videoUrl) {
     return (
@@ -103,7 +210,7 @@ export function VideoPlayer() {
             <div>
               <p className="text-lg font-medium">No video loaded</p>
               <p className="text-sm text-muted-foreground">
-                {hostState.isHost ? 'Load a video to start watching' : 'Waiting for host to load a video'}
+                {hostState.isHost ? 'Upload or load a video to start watching' : 'Waiting for host to load a video'}
               </p>
             </div>
           </div>
@@ -124,12 +231,31 @@ export function VideoPlayer() {
             height: "100%",
             playing: !videoState.paused,
             volume: volume,
+            playbackRate: videoState.playbackRate || 1.0,
             onProgress: handleProgress,
             onDuration: setDuration,
             onReady: () => {
-              if (playerRef.current) {
+              if (playerRef.current && videoState.position !== undefined) {
                 playerRef.current.seekTo(videoState.position, 'seconds');
                 setLocalTime(videoState.position);
+              }
+            },
+            onPause: () => {
+              if (hostState.isHost && room) {
+                supabaseApi.updateRoomState(room.id, {
+                  paused: true,
+                  position: playerRef.current?.getCurrentTime() || localTime,
+                  lastUpdated: Date.now() + serverTimeOffset
+                }).catch(console.error);
+              }
+            },
+            onPlay: () => {
+              if (hostState.isHost && room) {
+                supabaseApi.updateRoomState(room.id, {
+                  paused: false,
+                  position: playerRef.current?.getCurrentTime() || localTime,
+                  lastUpdated: Date.now() + serverTimeOffset
+                }).catch(console.error);
               }
             }
           })}
@@ -140,20 +266,35 @@ export function VideoPlayer() {
               variant="secondary" 
               className={cn(
                 "bg-black/50 backdrop-blur-sm",
-                (connectionState.drift || 0) > 400 ? "border-destructive/50" : 
-                (connectionState.drift || 0) > 100 ? "border-warning/50" : 
+                (connectionState.drift || 0) > 2000 ? "border-destructive/50" : 
+                (connectionState.drift || 0) > 500 ? "border-warning/50" : 
                 "border-success/50"
               )}
             >
               {(connectionState.drift || 0).toFixed(0)}ms drift
             </Badge>
             
+            {connectionState.rtt > 0 && (
+              <Badge variant="outline" className="bg-black/50 backdrop-blur-sm">
+                {connectionState.rtt}ms RTT
+              </Badge>
+            )}
+            
             {hostState.isHost && (
-              <Badge variant="host" className="bg-black/50 backdrop-blur-sm">
+              <Badge variant="default" className="bg-primary/80 backdrop-blur-sm">
                 HOST
               </Badge>
             )}
           </div>
+          
+          {/* Video filename overlay */}
+          {videoState.videoFilename && (
+            <div className="absolute bottom-4 left-4">
+              <Badge variant="outline" className="bg-black/50 backdrop-blur-sm">
+                {videoState.videoFilename}
+              </Badge>
+            </div>
+          )}
         </div>
       </Card>
 
@@ -184,6 +325,18 @@ export function VideoPlayer() {
           {/* Control Buttons */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
+              {/* Skip backwards */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleSkip(-10)}
+                disabled={!hostState.isHost}
+              >
+                <SkipBack className="w-4 h-4" />
+                10s
+              </Button>
+              
+              {/* Play/Pause */}
               <Button
                 variant={hostState.isHost ? "default" : "outline"}
                 size="sm"
@@ -197,17 +350,30 @@ export function VideoPlayer() {
                 )}
               </Button>
               
+              {/* Skip forwards */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handleSkip(10)}
+                disabled={!hostState.isHost}
+              >
+                <SkipForward className="w-4 h-4" />
+                10s
+              </Button>
+              
+              {/* Sync button */}
               <Button
                 variant="outline"
                 size="sm"
                 onClick={handleSyncNow}
+                disabled={hostState.isHost}
               >
                 <RotateCcw className="w-4 h-4 mr-1" />
-                Sync Now
+                Sync
               </Button>
             </div>
 
-            {/* Volume */}
+            {/* Volume Control */}
             <div className="flex items-center gap-2">
               <Volume2 className="w-4 h-4 text-muted-foreground" />
               <Slider
@@ -217,8 +383,35 @@ export function VideoPlayer() {
                 onValueChange={([value]) => setVolume(value)}
                 className="w-20"
               />
+              <span className="text-xs text-muted-foreground w-8">
+                {Math.round(volume * 100)}%
+              </span>
             </div>
           </div>
+          
+          {/* Playback Rate Control (Host only) */}
+          {hostState.isHost && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">Speed:</span>
+              {[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) => (
+                <Button
+                  key={rate}
+                  variant={videoState.playbackRate === rate ? "default" : "outline"}
+                  size="sm"
+                  onClick={async () => {
+                    if (room) {
+                      await supabaseApi.updateRoomState(room.id, {
+                        playback_rate: rate,
+                        lastUpdated: Date.now() + serverTimeOffset
+                      });
+                    }
+                  }}
+                >
+                  {rate}x
+                </Button>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
