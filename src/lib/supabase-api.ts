@@ -351,15 +351,20 @@ export const supabaseApi = {
 
     // Update room state to use first video if this is the first upload
     if (nextOrder === 1) {
-      await supabaseApi.updateRoomState(roomId, {
-        video_url: videoUrl,
-        video_filename: file.name,
-        video_type: 'upload',
-        playlist_mode: true,
-        current_video_index: 1,
-        paused: true,
-        position: 0
-      });
+      const { error: stateError } = await supabase
+        .from('room_state')
+        .update({
+          video_url: videoUrl,
+          video_filename: file.name,
+          video_type: 'upload',
+          playlist_mode: true,
+          current_video_index: 1,
+          paused: true,
+          position: 0
+        })
+        .eq('room_id', roomId);
+      
+      if (stateError) throw new SupabaseError('UPDATE_STATE_ERROR', stateError.message);
     }
 
     return videoUrl;
@@ -377,7 +382,9 @@ export const supabaseApi = {
       throw new SupabaseError('FILE_TOO_LARGE', 'Total file size exceeds 10GB limit');
     }
     
-    const uploadPromises = files.map(file => supabaseApi.uploadVideo(roomId, file));
+    const uploadPromises = files.map(async (file) => {
+      return await supabaseApi.uploadVideo(roomId, file);
+    });
     return Promise.all(uploadPromises);
   },
 
@@ -435,13 +442,20 @@ export const supabaseApi = {
       throw new SupabaseError('INVALID_INDEX', 'Video index out of range');
     }
     
-    await supabaseApi.updateRoomState(roomId, {
-      video_url: video.video_url,
-      video_filename: video.video_filename,
-      current_video_index: videoIndex,
-      position: 0,
-      paused: true
-    });
+    const { data, error } = await supabase
+      .from('room_state')
+      .update({
+        video_url: video.video_url,
+        video_filename: video.video_filename,
+        current_video_index: videoIndex,
+        position: 0,
+        paused: true
+      })
+      .eq('room_id', roomId)
+      .select()
+      .single();
+    
+    if (error) throw new SupabaseError('UPDATE_STATE_ERROR', error.message);
   },
 
   loadVideoFromUrl: async (roomId: string, url: string): Promise<void> => {
@@ -456,13 +470,18 @@ export const supabaseApi = {
     }
 
     // Update room state with new video URL
-    await supabaseApi.updateRoomState(roomId, {
-      video_url: url,
-      video_filename: null,
-      video_type: 'url',
-      playlist_mode: false,
-      paused: true,
-      position: 0
-    });
+    const { error } = await supabase
+      .from('room_state')
+      .update({
+        video_url: url,
+        video_filename: null,
+        video_type: 'url',
+        playlist_mode: false,
+        paused: true,
+        position: 0
+      })
+      .eq('room_id', roomId);
+    
+    if (error) throw new SupabaseError('UPDATE_STATE_ERROR', error.message);
   }
 };
