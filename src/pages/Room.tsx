@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { LoadingScreen } from '@/components/ui/loading';
 import { VideoPlayer } from '@/components/VideoPlayer';
+import { VideoPlaylist } from '@/components/VideoPlaylist';
 import { HostControls } from '@/components/HostControls';
 import { RoomInfo } from '@/components/RoomInfo';
 import { VideoUpload } from '@/components/VideoUpload';
@@ -67,6 +68,24 @@ export default function Room() {
     } catch (error: any) {
       toast({
         title: "Failed to switch video",
+        description: error.message,
+        variant: "destructive"
+      });
+    }
+  };
+
+  // Handle video delete
+  const handleVideoDelete = async (videoId: string) => {
+    try {
+      await supabaseApi.deleteRoomVideo(videoId);
+      await loadRoomVideos();
+      toast({
+        title: "Video deleted",
+        description: "Video has been removed from the playlist",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Failed to delete video",
         description: error.message,
         variant: "destructive"
       });
@@ -249,9 +268,12 @@ export default function Room() {
             <VideoUpload 
               roomId={roomId!}
               onVideoUploaded={loadRoomVideos}
+            />
+            <VideoPlaylist 
               videos={roomVideos}
+              currentVideoIndex={currentVideoIndex}
               onVideoSwitch={handleVideoSwitch}
-              currentIndex={currentVideoIndex}
+              onVideoDelete={handleVideoDelete}
             />
           </div>
         </div>

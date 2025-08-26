@@ -199,9 +199,9 @@ export function VideoPlayer() {
               <Play className="w-8 h-8 text-muted-foreground" />
             </div>
             <div>
-              <p className="text-lg font-medium">No video loaded</p>
+              <p className="text-lg font-medium">No video selected</p>
               <p className="text-sm text-muted-foreground">
-                {hostState.isHost ? 'Upload or load a video to start watching' : 'Waiting for host to load a video'}
+                {hostState.isHost ? 'Upload videos and select one from the playlist to start watching' : 'Waiting for host to select a video from the playlist'}
               </p>
             </div>
           </div>

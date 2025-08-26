@@ -361,16 +361,12 @@ export const supabaseApi = {
     
     if (dbError) throw new SupabaseError('DB_ERROR', dbError.message);
 
-    // Update room state to use first video if this is the first upload
+    // Set playlist mode but don't auto-play first video
     if (nextOrder === 1) {
       const { error: stateError } = await supabase
         .from('room_state')
         .update({
-          video_url: videoUrl,
-          video_filename: file.name,
-          video_type: 'upload',
           playlist_mode: true,
-          current_video_index: 1,
           paused: true,
           position: 0
         })
