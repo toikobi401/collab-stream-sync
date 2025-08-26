@@ -62,9 +62,12 @@ export const useStore = create<AppStore>((set, get) => ({
   
   // Video State
   videoState: {
+    videoUrl: null,
+    videoFilename: null,
     paused: true,
     position: 0,
     playbackRate: 1.0,
+    hostId: null,
   },
   setVideoState: (state) => set((prev) => ({
     videoState: { ...prev.videoState, ...state }
@@ -110,9 +113,12 @@ export const useStore = create<AppStore>((set, get) => ({
     room: null,
     members: [],
     videoState: {
+      videoUrl: null,
+      videoFilename: null,
       paused: true,
       position: 0,
       playbackRate: 1.0,
+      hostId: null,
     },
     connectionState: {
       connected: false,

@@ -100,11 +100,20 @@ export function VideoPlayer() {
     try {
       const currentPos = playerRef.current?.getCurrentTime ? 
         playerRef.current.getCurrentTime() : localTime;
+      
+      console.log('Play/pause clicked:', {
+        currentPaused: videoState.paused,
+        newPaused: !videoState.paused,
+        currentPos,
+        isHost: hostState.isHost
+      });
+      
       await supabaseApi.updateRoomState(room.id, {
         paused: !videoState.paused,
         position: currentPos
       });
     } catch (error: any) {
+      console.error('Play/pause error:', error);
       toast({
         title: "Control error",
         description: error.message,
@@ -170,6 +179,16 @@ export function VideoPlayer() {
       }
     }
   }, [videoState.position, localTime, isSeeking, hostState.isHost]);
+
+  // Debug logging
+  console.log('VideoPlayer state:', {
+    videoUrl: videoState.videoUrl,
+    videoFilename: videoState.videoFilename,
+    paused: videoState.paused,
+    position: videoState.position,
+    isHost: hostState.isHost,
+    room: room?.id
+  });
 
   if (!videoState.videoUrl) {
     return (
