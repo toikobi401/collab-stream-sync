@@ -220,6 +220,18 @@ export const supabaseApi = {
       .subscribe();
   },
 
+  // Delete room (host only)
+  async deleteRoom(roomId: string): Promise<void> {
+    const { error } = await supabase
+      .from('rooms')
+      .delete()
+      .eq('id', roomId);
+
+    if (error) {
+      throw new Error(`Failed to delete room: ${error.message}`);
+    }
+  },
+
   subscribeToRoomMembers: (roomId: string, callback: (members: RoomMember[]) => void) => {
     return supabase
       .channel(`room_members_${roomId}`)

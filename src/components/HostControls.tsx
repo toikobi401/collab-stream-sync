@@ -3,11 +3,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { useStore, useHostState, useRoom, useMembers, useUser } from '@/store';
 import { useToast } from '@/hooks/use-toast';
+import { useNavigate } from 'react-router-dom';
 import { supabaseApi } from '@/lib/supabase-api';
 import { VideoUpload } from '@/components/VideoUpload';
-import { Crown, UserCheck, AlertCircle } from 'lucide-react';
+import { Crown, UserCheck, AlertCircle, Trash2 } from 'lucide-react';
 
 export function HostControls() {
   const [videoUrl, setVideoUrl] = useState('');
@@ -18,6 +20,7 @@ export function HostControls() {
   const room = useRoom();
   const members = useMembers();
   const user = useUser();
+  const navigate = useNavigate();
   const setHostState = useStore(state => state.setHostState);
   const { toast } = useToast();
 
@@ -123,6 +126,28 @@ export function HostControls() {
     }
   };
 
+  const handleDeleteRoom = async () => {
+    if (!room || !hostState.isHost) return;
+    
+    setIsLoading(true);
+    try {
+      await supabaseApi.deleteRoom(room.id);
+      toast({
+        title: "Room deleted",
+        description: "The room has been permanently deleted"
+      });
+      navigate('/rooms');
+    } catch (error: any) {
+      toast({
+        title: "Failed to delete room",
+        description: error.message,
+        variant: "destructive"
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const otherMembers = members.filter(member => member.user_id !== user?.id);
 
   const getMemberName = (member: any) => {
@@ -197,6 +222,42 @@ export function HostControls() {
                 </div>
               </div>
             )}
+
+            {/* Delete Room */}
+            <div className="space-y-3">
+              <label className="text-sm font-medium text-destructive">Danger Zone</label>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button 
+                    variant="destructive" 
+                    size="sm"
+                    className="w-full"
+                    disabled={isLoading}
+                  >
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Delete Room
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Delete Room</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Are you sure you want to delete this room? This action cannot be undone. 
+                      All videos, members, and room data will be permanently removed.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction 
+                      onClick={handleDeleteRoom}
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    >
+                      Delete Room
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
           </>
         )}
 
