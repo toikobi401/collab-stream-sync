@@ -144,6 +144,8 @@ export default function Room() {
         
         // Setup real-time subscriptions
         const roomStateChannel = supabaseApi.subscribeToRoomState(roomId, (newState) => {
+          console.log('Real-time room state update received:', newState);
+          
           setVideoState({
             videoUrl: newState.video_url || undefined,
             videoFilename: newState.video_filename || undefined,

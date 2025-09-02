@@ -108,10 +108,16 @@ export function VideoPlayer() {
         isHost: hostState.isHost
       });
       
-      await supabaseApi.updateRoomState(room.id, {
+      const updateData = {
         paused: !videoState.paused,
         position: currentPos
-      });
+      };
+      
+      console.log('Updating room state with:', updateData);
+      
+      const result = await supabaseApi.updateRoomState(room.id, updateData);
+      
+      console.log('Update result:', result);
     } catch (error: any) {
       console.error('Play/pause error:', error);
       toast({
