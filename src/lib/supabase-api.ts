@@ -307,7 +307,7 @@ export const supabaseApi = {
 
   // File Upload
   // Video Management
-  uploadVideo: async (roomId: string, file: File): Promise<string> => {
+  uploadVideo: async (roomId: string, file: File): Promise<{ url: string; videoId: string }> => {
     const user = (await supabase.auth.getUser()).data.user;
     if (!user) throw new SupabaseError('AUTH_ERROR', 'Not authenticated');
 
@@ -348,7 +348,7 @@ export const supabaseApi = {
       : 1;
     
     // Add video to room_videos table
-    const { error: dbError } = await supabase
+    const { data: videoData, error: dbError } = await supabase
       .from('room_videos')
       .insert({
         room_id: roomId,
@@ -357,7 +357,9 @@ export const supabaseApi = {
         file_size: file.size,
         video_order: nextOrder,
         uploaded_by: user.id
-      });
+      })
+      .select()
+      .single();
     
     if (dbError) throw new SupabaseError('DB_ERROR', dbError.message);
 
@@ -375,10 +377,10 @@ export const supabaseApi = {
       if (stateError) throw new SupabaseError('UPDATE_STATE_ERROR', stateError.message);
     }
 
-    return videoUrl;
+    return { url: videoUrl, videoId: videoData.id };
   },
 
-  uploadMultipleVideos: async (roomId: string, files: File[]): Promise<string[]> => {
+  uploadMultipleVideos: async (roomId: string, files: File[]): Promise<{ url: string; videoId: string }[]> => {
     if (files.length > 5) {
       throw new SupabaseError('TOO_MANY_FILES', 'Maximum 5 videos allowed per room');
     }
@@ -394,6 +396,16 @@ export const supabaseApi = {
       return await supabaseApi.uploadVideo(roomId, file);
     });
     return Promise.all(uploadPromises);
+  },
+
+  // Update video duration after upload
+  updateVideoDuration: async (videoId: string, duration: number): Promise<void> => {
+    const { error } = await supabase
+      .from('room_videos')
+      .update({ duration })
+      .eq('id', videoId);
+    
+    if (error) throw new SupabaseError('UPDATE_DURATION_ERROR', error.message);
   },
 
   getRoomVideos: async (roomId: string): Promise<any[]> => {

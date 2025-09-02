@@ -21,6 +21,7 @@ export const VideoUpload: React.FC<VideoUploadProps> = ({
   const [uploadProgress, setUploadProgress] = useState(0);
   const [urlInput, setUrlInput] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const hostState = useHostState();
   const { toast } = useToast();
 
@@ -55,15 +56,25 @@ export const VideoUpload: React.FC<VideoUploadProps> = ({
         return;
       }
 
+      let uploadResults: { url: string; videoId: string }[] = [];
+      
       if (fileArray.length === 1) {
         // Single file upload
-        await supabaseApi.uploadVideo(roomId, fileArray[0]);
-        setUploadProgress(100);
+        const result = await supabaseApi.uploadVideo(roomId, fileArray[0]);
+        uploadResults = [result];
+        setUploadProgress(50);
       } else {
         // Multiple file upload
-        await supabaseApi.uploadMultipleVideos(roomId, fileArray);
-        setUploadProgress(100);
+        uploadResults = await supabaseApi.uploadMultipleVideos(roomId, fileArray);
+        setUploadProgress(50);
       }
+
+      // Extract video duration for each uploaded video
+      for (const result of uploadResults) {
+        await extractVideoDuration(result.url, result.videoId);
+      }
+      
+      setUploadProgress(100);
 
       toast({
         title: "Upload successful",
@@ -86,6 +97,41 @@ export const VideoUpload: React.FC<VideoUploadProps> = ({
       setIsUploading(false);
       setUploadProgress(0);
     }
+  };
+
+  const extractVideoDuration = async (videoUrl: string, videoId: string): Promise<void> => {
+    return new Promise<void>((resolve) => {
+      if (!videoRef.current) {
+        resolve();
+        return;
+      }
+
+      const video = videoRef.current;
+      
+      const handleLoadedMetadata = async () => {
+        try {
+          if (video.duration && !isNaN(video.duration) && isFinite(video.duration)) {
+            await supabaseApi.updateVideoDuration(videoId, video.duration);
+          }
+        } catch (error) {
+          console.error('Failed to update video duration:', error);
+        } finally {
+          video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+          video.removeEventListener('error', handleError);
+          resolve();
+        }
+      };
+
+      const handleError = () => {
+        video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+        video.removeEventListener('error', handleError);
+        resolve();
+      };
+
+      video.addEventListener('loadedmetadata', handleLoadedMetadata);
+      video.addEventListener('error', handleError);
+      video.src = videoUrl;
+    });
   };
 
   const handleUrlLoad = async () => {
@@ -127,14 +173,18 @@ export const VideoUpload: React.FC<VideoUploadProps> = ({
   }
 
   return (
-    <Card className="gradient-card border-card-border">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Upload className="h-5 w-5 text-primary" />
-          Upload Videos
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
+    <>
+      {/* Hidden video element for duration extraction */}
+      <video ref={videoRef} style={{ display: 'none' }} />
+      
+      <Card className="gradient-card border-card-border">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Upload className="h-5 w-5 text-primary" />
+            Upload Videos
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
         {/* File Upload */}
         <div className="space-y-4">
           <div>
@@ -194,5 +244,6 @@ export const VideoUpload: React.FC<VideoUploadProps> = ({
         </div>
       </CardContent>
     </Card>
+    </>
   );
 };
