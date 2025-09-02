@@ -230,12 +230,22 @@ export function VideoPlayer() {
             volume: volume,
             playbackRate: videoState.playbackRate || 1.0,
             onProgress: handleProgress,
-            onDuration: setDuration,
+            onDuration: (duration: number) => {
+              console.log('Video duration loaded:', duration);
+              setDuration(duration);
+            },
             onReady: () => {
+              console.log('Video player ready');
               if (playerRef.current && videoState.position !== undefined && playerRef.current.seekTo) {
                 playerRef.current.seekTo(videoState.position, 'seconds');
                 setLocalTime(videoState.position);
               }
+            },
+            onLoadStart: () => {
+              console.log('Video loading started');
+            },
+            onError: (error: any) => {
+              console.error('Video player error:', error);
             },
             onPause: () => {
               if (hostState.isHost && room) {
