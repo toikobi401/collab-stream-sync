@@ -6,7 +6,7 @@ import { Slider } from '@/components/ui/slider';
 import { Badge } from '@/components/ui/badge';
 import { useStore, useVideoState, useHostState, useConnectionState } from '@/store';
 import { supabaseApi } from '@/lib/supabase-api';
-import { Play, Pause, RotateCcw, Volume2, SkipForward, SkipBack } from 'lucide-react';
+import { Play, Pause, RotateCcw, Volume2, SkipForward, SkipBack, Wifi, WifiOff } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/components/ui/use-toast';
 
@@ -16,14 +16,23 @@ interface PlayerRef {
   getDuration: () => number;
 }
 
+interface ReactPlayerRef {
+  seekTo: (seconds: number, type?: 'seconds' | 'fraction') => void;
+  getCurrentTime: () => number;
+  getDuration: () => number;
+}
+
 export function VideoPlayer() {
-  const playerRef = useRef<PlayerRef>(null);
+  const playerRef = useRef<HTMLVideoElement>(null);
   const [localTime, setLocalTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(0.8);
   const [isSeeking, setIsSeeking] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState(0);
   const [serverTimeOffset, setServerTimeOffset] = useState(0);
+  const [isUpdatingState, setIsUpdatingState] = useState(false);
+  const [lastStateUpdate, setLastStateUpdate] = useState(0);
+  const [isVideoLoading, setIsVideoLoading] = useState(false);
   
   const videoState = useVideoState();
   const hostState = useHostState();
@@ -35,71 +44,152 @@ export function VideoPlayer() {
   const updateDrift = useStore(state => state.updateDrift);
   const setConnectionState = useStore(state => state.setConnectionState);
 
-  // Calculate server time sync
+  // Calculate server time sync with RTT measurement
   const syncServerTime = useCallback(async () => {
-    // Use local time since external API is not accessible in sandbox
-    const currentTime = Date.now();
-    setServerTimeOffset(0); // No offset needed for local time
-    setConnectionState({ 
-      rtt: 0, 
-      offset: 0,
-      lastSync: currentTime 
-    });
-  }, [setConnectionState]);
+    const startTime = Date.now();
+    
+    // Simulate network RTT by measuring database response time
+    try {
+      if (room) {
+        const beforePing = performance.now();
+        await supabaseApi.getRoomState(room.id);
+        const afterPing = performance.now();
+        const rtt = afterPing - beforePing;
+        
+        setConnectionState({ 
+          rtt: Math.round(rtt), 
+          offset: 0, // Local time reference
+          lastSync: Date.now() 
+        });
+      }
+    } catch (error) {
+      // Fallback to basic sync
+      setConnectionState({ 
+        rtt: 50, // Default assumed RTT
+        offset: 0,
+        lastSync: Date.now() 
+      });
+    }
+  }, [setConnectionState, room]);
 
-  // Sync time periodically
+  // Sync time periodically - more frequent for better accuracy
   useEffect(() => {
     syncServerTime();
-    const interval = setInterval(syncServerTime, 30000); // Sync every 30 seconds
+    const interval = setInterval(syncServerTime, 15000); // Sync every 15 seconds
     return () => clearInterval(interval);
   }, [syncServerTime]);
 
-  // Calculate simple drift between local and server video position
+  // Calculate drift and apply smart correction
   const calculateDrift = useCallback(() => {
-    if (!playerRef.current?.getCurrentTime) return;
+    if (!playerRef.current || hostState.isHost || isSeeking) return;
     
-    const actualPosition = playerRef.current.getCurrentTime();
+    const actualPosition = playerRef.current.currentTime;
     const expectedPosition = videoState.position;
     const drift = Math.abs(expectedPosition - actualPosition) * 1000; // ms
     
     updateDrift(drift);
     
-    // Auto-sync if drift is too high
-    if (drift > 2000 && !hostState.isHost && !isSeeking && playerRef.current.seekTo) {
-      playerRef.current.seekTo(expectedPosition, 'seconds');
+    // Smart drift correction with different thresholds
+    if (drift > 5000) {
+      // Large drift - immediate hard sync
+      console.log('Large drift detected, hard sync:', drift + 'ms');
+      playerRef.current.currentTime = expectedPosition;
       setLocalTime(expectedPosition);
+    } else if (drift > 2000) {
+      // Medium drift - gradual correction
+      console.log('Medium drift detected, gradual sync:', drift + 'ms');
+      const correctionAmount = (expectedPosition - actualPosition) * 0.1; // 10% correction
+      const targetTime = actualPosition + correctionAmount;
+      playerRef.current.currentTime = targetTime;
+      setLocalTime(targetTime);
+    } else if (drift > 1000) {
+      // Small drift - playback rate adjustment
+      console.log('Small drift detected, rate adjustment:', drift + 'ms');
+      const speedAdjustment = expectedPosition > actualPosition ? 1.05 : 0.95;
+      playerRef.current.playbackRate = speedAdjustment;
+      
+      // Reset to normal speed after correction
+      setTimeout(() => {
+        if (playerRef.current) {
+          playerRef.current.playbackRate = videoState.playbackRate || 1.0;
+        }
+      }, 2000);
     }
-  }, [videoState.position, hostState.isHost, isSeeking, updateDrift]);
+  }, [videoState.position, hostState.isHost, isSeeking, updateDrift, videoState.playbackRate]);
 
-  // Monitor drift every 3 seconds
+  // Monitor drift every 2 seconds for more responsive correction
   useEffect(() => {
-    const interval = setInterval(calculateDrift, 3000);
+    const interval = setInterval(calculateDrift, 2000);
     return () => clearInterval(interval);
   }, [calculateDrift]);
 
-  // Update local time and sync
-  const handleProgress = useCallback((state: { playedSeconds: number }) => {
-    if (!isSeeking) {
-      setLocalTime(state.playedSeconds);
-      updateVideoTime(state.playedSeconds);
+  // Enhanced progress tracking with network compensation
+  const handleProgress = useCallback(() => {
+    if (!isSeeking && playerRef.current) {
+      const currentTime = playerRef.current.currentTime;
+      setLocalTime(currentTime);
+      updateVideoTime(currentTime);
       
-      // Host broadcasts position updates every 5 seconds
-      if (hostState.isHost && room && Date.now() - lastSyncTime > 5000) {
-        supabaseApi.updateRoomState(room.id, {
-          position: state.playedSeconds
-        }).catch(console.error);
-        setLastSyncTime(Date.now());
+      // Host broadcasts position updates with adaptive frequency
+      if (hostState.isHost && room) {
+        const now = Date.now();
+        const timeSinceLastSync = now - lastSyncTime;
+        
+        // Adaptive sync frequency based on video state
+        let syncInterval = 3000; // Default 3 seconds
+        
+        if (!videoState.paused) {
+          syncInterval = 2000; // More frequent when playing
+        }
+        
+        if (timeSinceLastSync > syncInterval) {
+          // Compensate for network delay
+          const networkDelay = connectionState.rtt / 2; // Half RTT for one-way delay
+          const compensatedPosition = currentTime + (networkDelay / 1000);
+          
+          supabaseApi.updateRoomState(room.id, {
+            position: compensatedPosition,
+            updated_at: new Date().toISOString()
+          }).catch(console.error);
+          
+          setLastSyncTime(now);
+          console.log('Position synced:', {
+            rawPosition: currentTime,
+            compensatedPosition,
+            networkDelay,
+            rtt: connectionState.rtt
+          });
+        }
       }
     }
-  }, [isSeeking, updateVideoTime, hostState.isHost, room, lastSyncTime, serverTimeOffset]);
+  }, [isSeeking, updateVideoTime, hostState.isHost, room, lastSyncTime, connectionState.rtt, videoState.paused]);
+
+  // Listen to video progress
+  useEffect(() => {
+    const video = playerRef.current;
+    if (!video) return;
+
+    const handleTimeUpdate = () => {
+      handleProgress();
+    };
+
+    video.addEventListener('timeupdate', handleTimeUpdate);
+    return () => video.removeEventListener('timeupdate', handleTimeUpdate);
+  }, [handleProgress]);
 
   // Host controls
   const handlePlayPause = async () => {
-    if (!hostState.isHost || !room) return;
+    if (!hostState.isHost || !room || isUpdatingState) return;
+    
+    const now = Date.now();
+    if (now - lastStateUpdate < 1000) return; // Debounce 1 second
+    
+    setIsUpdatingState(true);
+    setLastStateUpdate(now);
     
     try {
-      const currentPos = playerRef.current?.getCurrentTime ? 
-        playerRef.current.getCurrentTime() : localTime;
+      const currentPos = playerRef.current ? 
+        playerRef.current.currentTime : localTime;
       
       console.log('Play/pause clicked:', {
         currentPaused: videoState.paused,
@@ -125,18 +215,40 @@ export function VideoPlayer() {
         description: error.message,
         variant: "destructive"
       });
+    } finally {
+      setTimeout(() => {
+        setIsUpdatingState(false);
+      }, 500);
     }
   };
 
+  // Enhanced seek with compensation and smooth transition
   const handleSeek = async (newTime: number) => {
     if (!hostState.isHost || !room) return;
     
     setIsSeeking(true);
     setLocalTime(newTime);
     
+    // Set video time directly with smooth transition
+    if (playerRef.current) {
+      playerRef.current.currentTime = newTime;
+    }
+    
     try {
+      // Compensate for network delay when seeking
+      const networkDelay = connectionState.rtt / 2;
+      const compensatedTime = newTime + (networkDelay / 1000);
+      
       await supabaseApi.updateRoomState(room.id, {
-        position: newTime
+        position: compensatedTime,
+        updated_at: new Date().toISOString()
+      });
+      
+      console.log('Seek broadcast:', {
+        requestedTime: newTime,
+        compensatedTime,
+        networkDelay,
+        rtt: connectionState.rtt
       });
     } catch (error: any) {
       toast({
@@ -146,55 +258,193 @@ export function VideoPlayer() {
       });
     }
     
-    setTimeout(() => setIsSeeking(false), 100);
+    setTimeout(() => setIsSeeking(false), 200); // Slightly longer debounce
   };
 
   const handleSkip = async (seconds: number) => {
-    if (!hostState.isHost || !playerRef.current?.getCurrentTime || !room) return;
+    if (!hostState.isHost || !playerRef.current || !room) return;
     
-    const currentTime = playerRef.current.getCurrentTime();
+    const currentTime = playerRef.current.currentTime;
     const newTime = Math.max(0, Math.min(duration, currentTime + seconds));
     await handleSeek(newTime);
   };
 
+  // Enhanced sync with time-based compensation
   const handleSyncNow = () => {
     if (playerRef.current && videoState.position !== undefined) {
-      // Use current server position without time calculation
-      const expectedPosition = videoState.position;
+      // Calculate expected position based on server time and playback state
+      const serverUpdateTime = new Date(videoState.lastUpdated || 0).getTime();
+      const currentTime = Date.now();
+      const timeSinceUpdate = (currentTime - serverUpdateTime) / 1000;
       
-      if (playerRef.current.seekTo) {
-        playerRef.current.seekTo(expectedPosition, 'seconds');
-        setLocalTime(expectedPosition);
-        updateVideoTime(expectedPosition);
+      let expectedPosition = videoState.position;
+      
+      // If video is playing, estimate current position
+      if (!videoState.paused && timeSinceUpdate > 0) {
+        const playbackRate = videoState.playbackRate || 1.0;
+        expectedPosition += timeSinceUpdate * playbackRate;
         
-        toast({
-          title: "Synced",
-          description: "Video synchronized with server"
-        });
+        // Compensate for network delay
+        const networkDelay = connectionState.rtt / 2000; // Convert to seconds
+        expectedPosition += networkDelay;
       }
+      
+      playerRef.current.currentTime = expectedPosition;
+      setLocalTime(expectedPosition);
+      updateVideoTime(expectedPosition);
+      
+      console.log('Manual sync performed:', {
+        serverPosition: videoState.position,
+        timeSinceUpdate,
+        expectedPosition,
+        networkCompensation: connectionState.rtt / 2000
+      });
+      
+      toast({
+        title: "Synced",
+        description: `Video synchronized (drift: ${Math.round((expectedPosition - playerRef.current.currentTime) * 1000)}ms)`
+      });
     }
   };
 
-  // Sync video state when it changes
+  // Enhanced video state sync with predictive positioning
   useEffect(() => {
-    if (playerRef.current && !isSeeking && !hostState.isHost && playerRef.current.seekTo) {
-      const timeDiff = Math.abs(localTime - videoState.position);
-      if (timeDiff > 1) {
-        playerRef.current.seekTo(videoState.position, 'seconds');
-        setLocalTime(videoState.position);
-      }
+    if (!playerRef.current || !videoState.videoUrl) return;
+    
+    const now = Date.now();
+    
+    // Debounce rapid updates
+    if (now - lastStateUpdate < 300) return; // Reduced debounce for more responsive sync
+    
+    // Sync playing state
+    const shouldPlay = !videoState.paused;
+    console.log('Syncing video state:', {
+      shouldPlay,
+      currentPaused: videoState.paused,
+      position: videoState.position,
+      isHost: hostState.isHost,
+      lastUpdated: videoState.lastUpdated
+    });
+    
+    // Control video playback
+    if (shouldPlay && playerRef.current.paused) {
+      playerRef.current.play().catch(console.error);
+    } else if (!shouldPlay && !playerRef.current.paused) {
+      playerRef.current.pause();
     }
-  }, [videoState.position, localTime, isSeeking, hostState.isHost]);
+    
+    // Set volume and playback rate
+    playerRef.current.volume = volume;
+    playerRef.current.playbackRate = videoState.playbackRate || 1.0;
+    
+    // Smart position sync for non-hosts
+    if (!isSeeking && !hostState.isHost && videoState.position !== undefined) {
+      const actualPosition = playerRef.current.currentTime;
+      
+      // Calculate expected position with time compensation
+      const serverUpdateTime = new Date(videoState.lastUpdated || 0).getTime();
+      const timeSinceUpdate = (now - serverUpdateTime) / 1000;
+      
+      let expectedPosition = videoState.position;
+      
+      // Predict current position if video is playing
+      if (!videoState.paused && timeSinceUpdate > 0 && timeSinceUpdate < 10) {
+        const playbackRate = videoState.playbackRate || 1.0;
+        expectedPosition += timeSinceUpdate * playbackRate;
+        
+        // Add network delay compensation
+        const networkDelay = connectionState.rtt / 2000;
+        expectedPosition += networkDelay;
+      }
+      
+      const timeDiff = Math.abs(actualPosition - expectedPosition);
+      
+      // Apply different sync strategies based on difference
+      if (timeDiff > 5) {
+        // Large difference - immediate sync
+        console.log('Large difference, immediate sync:', timeDiff);
+        playerRef.current.currentTime = expectedPosition;
+        setLocalTime(expectedPosition);
+      } else if (timeDiff > 1) {
+        // Medium difference - smooth sync
+        console.log('Medium difference, smooth sync:', timeDiff);
+        const smoothTarget = actualPosition + (expectedPosition - actualPosition) * 0.3;
+        playerRef.current.currentTime = smoothTarget;
+        setLocalTime(smoothTarget);
+      }
+      // Small differences (< 1 second) are handled by drift correction
+    }
+  }, [videoState.paused, videoState.position, videoState.videoUrl, videoState.playbackRate, videoState.lastUpdated, localTime, isSeeking, hostState.isHost, lastStateUpdate, volume, connectionState.rtt]);
 
-  // Debug logging
+  // Force duration load when video URL changes
+  useEffect(() => {
+    if (!videoState.videoUrl) {
+      setDuration(0);
+      setLocalTime(0);
+      return;
+    }
+
+    console.log('Video URL changed, attempting to load duration:', videoState.videoUrl);
+    
+    // Try to get duration from player after a short delay
+    const timeoutId = setTimeout(() => {
+      if (playerRef.current && playerRef.current.duration) {
+        const videoDuration = playerRef.current.duration;
+        if (videoDuration && videoDuration > 0) {
+          console.log('Duration loaded from player:', videoDuration);
+          setDuration(videoDuration);
+        } else {
+          console.log('Duration not available yet, will try again on metadata load');
+        }
+      }
+    }, 1000);
+
+    return () => clearTimeout(timeoutId);
+  }, [videoState.videoUrl]);
+
+  // Auto-recovery mechanism for connection issues
+  useEffect(() => {
+    const checkConnection = () => {
+      const timeSinceLastSync = Date.now() - connectionState.lastSync;
+      
+      // If no sync for more than 30 seconds, attempt recovery
+      if (timeSinceLastSync > 30000) {
+        console.log('Connection appears stale, attempting recovery...');
+        syncServerTime();
+        
+        // Force a sync if not host
+        if (!hostState.isHost) {
+          handleSyncNow();
+        }
+      }
+    };
+    
+    const interval = setInterval(checkConnection, 10000); // Check every 10 seconds
+    return () => clearInterval(interval);
+  }, [connectionState.lastSync, hostState.isHost, syncServerTime]);
+
+  // Debug logging - Enhanced
   console.log('VideoPlayer state:', {
     videoUrl: videoState.videoUrl,
     videoFilename: videoState.videoFilename,
     paused: videoState.paused,
     position: videoState.position,
     isHost: hostState.isHost,
-    room: room?.id
+    room: room?.id,
+    duration: duration,
+    localTime: localTime,
+    hasPlayerRef: !!playerRef.current
   });
+
+  // Track videoState changes
+  useEffect(() => {
+    console.log('VideoPlayer videoState changed:', {
+      paused: videoState.paused,
+      position: videoState.position,
+      videoUrl: videoState.videoUrl,
+      timestamp: Date.now()
+    });
+  }, [videoState.paused, videoState.position, videoState.videoUrl]);
 
   if (!videoState.videoUrl) {
     return (
@@ -221,74 +471,99 @@ export function VideoPlayer() {
       {/* Video Player */}
       <Card className="gradient-card border-card-border overflow-hidden">
         <div className="relative aspect-video bg-black">
-          {React.createElement(ReactPlayer as any, {
-            ref: playerRef,
-            url: videoState.videoUrl,
-            width: "100%",
-            height: "100%",
-            playing: !videoState.paused,
-            volume: volume,
-            playbackRate: videoState.playbackRate || 1.0,
-            onProgress: handleProgress,
-            onDuration: (duration: number) => {
-              console.log('Video duration loaded:', duration);
-              setDuration(duration);
-            },
-            onReady: () => {
-              console.log('Video player ready');
-              if (playerRef.current && videoState.position !== undefined && playerRef.current.seekTo) {
-                playerRef.current.seekTo(videoState.position, 'seconds');
+          {isVideoLoading && (
+            <div className="absolute inset-0 flex items-center justify-center z-10">
+              <div className="text-center space-y-4">
+                <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto"></div>
+                <p className="text-sm text-muted-foreground">Loading video...</p>
+              </div>
+            </div>
+          )}
+          
+          <video 
+            ref={playerRef}
+            src={videoState.videoUrl}
+            width="100%"
+            height="100%"
+            playsInline
+            onLoadStart={() => {
+              console.log('Video loading started:', videoState.videoUrl);
+              setIsVideoLoading(true);
+            }}
+            onLoadedMetadata={() => {
+              console.log('Video metadata loaded');
+              setIsVideoLoading(false);
+              if (playerRef.current && playerRef.current.duration) {
+                const videoDuration = playerRef.current.duration;
+                console.log('Duration from metadata:', videoDuration);
+                setDuration(videoDuration);
+              }
+            }}
+            onLoadedData={() => {
+              console.log('Video data loaded');
+              setIsVideoLoading(false);
+              if (playerRef.current && videoState.position !== undefined) {
+                playerRef.current.currentTime = videoState.position;
                 setLocalTime(videoState.position);
               }
-            },
-            onLoadStart: () => {
-              console.log('Video loading started');
-            },
-            onError: (error: any) => {
+            }}
+            onCanPlay={() => {
+              console.log('Video can start playing');
+              setIsVideoLoading(false);
+              if (playerRef.current && playerRef.current.duration) {
+                const videoDuration = playerRef.current.duration;
+                console.log('Duration from canplay:', videoDuration);
+                setDuration(videoDuration);
+              }
+            }}
+            onError={(error) => {
               console.error('Video player error:', error);
-            },
-            onPause: () => {
-              if (hostState.isHost && room) {
-                const currentPos = playerRef.current?.getCurrentTime ? 
-                  playerRef.current.getCurrentTime() : localTime;
-                supabaseApi.updateRoomState(room.id, {
-                  paused: true,
-                  position: currentPos
-                }).catch(console.error);
-              }
-            },
-            onPlay: () => {
-              if (hostState.isHost && room) {
-                const currentPos = playerRef.current?.getCurrentTime ? 
-                  playerRef.current.getCurrentTime() : localTime;
-                supabaseApi.updateRoomState(room.id, {
-                  paused: false,
-                  position: currentPos
-                }).catch(console.error);
-              }
-            }
-          })}
+              setIsVideoLoading(false);
+              toast({
+                title: "Video playback error",
+                description: "Failed to load video. Please try again.",
+                variant: "destructive"
+              });
+            }}
+            onPlay={() => {
+              console.log('Video onPlay event triggered, current paused state:', videoState.paused);
+            }}
+            onPause={() => {
+              console.log('Video onPause event triggered, current paused state:', videoState.paused);
+            }}
+            className="w-full h-full bg-black"
+          />
           
           {/* Sync Status Overlay */}
           <div className="absolute top-4 right-4 flex gap-2">
+            {/* Connection Status */}
+            <Badge 
+              variant="outline" 
+              className={cn(
+                "bg-black/50 backdrop-blur-sm",
+                connectionState.rtt > 200 ? "border-destructive/50 text-destructive" : 
+                connectionState.rtt > 100 ? "border-warning/50 text-warning" : 
+                "border-success/50 text-success"
+              )}
+            >
+              {connectionState.rtt > 200 ? <WifiOff className="w-3 h-3 mr-1" /> : <Wifi className="w-3 h-3 mr-1" />}
+              {connectionState.rtt}ms
+            </Badge>
+            
+            {/* Drift Status */}
             <Badge 
               variant="secondary" 
               className={cn(
                 "bg-black/50 backdrop-blur-sm",
-                (connectionState.drift || 0) > 2000 ? "border-destructive/50" : 
-                (connectionState.drift || 0) > 500 ? "border-warning/50" : 
-                "border-success/50"
+                (connectionState.drift || 0) > 2000 ? "border-destructive/50 text-destructive" : 
+                (connectionState.drift || 0) > 500 ? "border-warning/50 text-warning" : 
+                "border-success/50 text-success"
               )}
             >
               {(connectionState.drift || 0).toFixed(0)}ms drift
             </Badge>
             
-            {connectionState.rtt > 0 && (
-              <Badge variant="outline" className="bg-black/50 backdrop-blur-sm">
-                {connectionState.rtt}ms RTT
-              </Badge>
-            )}
-            
+            {/* Host Badge */}
             {hostState.isHost && (
               <Badge variant="default" className="bg-primary/80 backdrop-blur-sm">
                 HOST
@@ -350,9 +625,11 @@ export function VideoPlayer() {
                 variant={hostState.isHost ? "default" : "outline"}
                 size="sm"
                 onClick={handlePlayPause}
-                disabled={!hostState.isHost}
+                disabled={!hostState.isHost || isUpdatingState}
               >
-                {videoState.paused ? (
+                {isUpdatingState ? (
+                  <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                ) : videoState.paused ? (
                   <Play className="w-4 h-4" />
                 ) : (
                   <Pause className="w-4 h-4" />
@@ -420,6 +697,40 @@ export function VideoPlayer() {
               ))}
             </div>
           )}
+          
+          {/* Sync Information Panel */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2 border-t border-border/50">
+            <div className="text-center">
+              <div className="text-xs text-muted-foreground">Drift</div>
+              <div className={cn(
+                "text-sm font-mono font-medium",
+                (connectionState.drift || 0) > 2000 ? "text-destructive" : 
+                (connectionState.drift || 0) > 500 ? "text-warning" : 
+                "text-success"
+              )}>
+                {(connectionState.drift || 0).toFixed(0)}ms
+              </div>
+            </div>
+            
+            <div className="text-center">
+              <div className="text-xs text-muted-foreground">Network RTT</div>
+              <div className={cn(
+                "text-sm font-mono font-medium",
+                connectionState.rtt > 200 ? "text-destructive" : 
+                connectionState.rtt > 100 ? "text-warning" : 
+                "text-success"
+              )}>
+                {connectionState.rtt}ms
+              </div>
+            </div>
+            
+            <div className="text-center">
+              <div className="text-xs text-muted-foreground">Last Sync</div>
+              <div className="text-sm font-mono font-medium text-muted-foreground">
+                {Math.round((Date.now() - connectionState.lastSync) / 1000)}s ago
+              </div>
+            </div>
+          </div>
         </CardContent>
       </Card>
     </div>

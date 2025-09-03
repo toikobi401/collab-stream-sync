@@ -7,7 +7,7 @@ import { VideoPlaylist } from '@/components/VideoPlaylist';
 import { HostControls } from '@/components/HostControls';
 import { RoomInfo } from '@/components/RoomInfo';
 import { VideoUpload } from '@/components/VideoUpload';
-import { useStore, useUser, useRoom, useConnectionState, useProfile } from '@/store';
+import { useStore, useUser, useRoom, useConnectionState, useProfile, useVideoState, useHostState } from '@/store';
 import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/use-toast';
 import { supabaseApi } from '@/lib/supabase-api';
@@ -24,6 +24,8 @@ export default function Room() {
   const user = useUser();
   const profile = useProfile();
   const room = useRoom();
+  const videoState = useVideoState();
+  const hostState = useHostState();
   const connectionState = useConnectionState();
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -54,6 +56,18 @@ export default function Room() {
     try {
       const videos = await supabaseApi.getRoomVideos(roomId);
       setRoomVideos(videos);
+      
+      // Auto-select first video if no video is currently selected and user is host
+      if (videos.length > 0 && !videoState.videoUrl && hostState.isHost) {
+        console.log('Auto-selecting first video for host');
+        setTimeout(async () => {
+          try {
+            await handleVideoSwitch(1);
+          } catch (error) {
+            console.error('Failed to auto-select first video:', error);
+          }
+        }, 1000);
+      }
     } catch (error) {
       console.error('Failed to load room videos:', error);
     }
@@ -63,9 +77,36 @@ export default function Room() {
   const handleVideoSwitch = async (index: number) => {
     if (!roomId) return;
     try {
-      await supabaseApi.switchToVideo(roomId, index);
+      // Load current room videos to get the selected video details
+      const videos = await supabaseApi.getRoomVideos(roomId);
+      const selectedVideo = videos[index - 1]; // Convert to 0-based index
+      
+      if (!selectedVideo) {
+        throw new Error('Video not found in playlist');
+      }
+      
+      console.log('Switching to video:', {
+        index,
+        video: selectedVideo
+      });
+      
+      // Update room state with the selected video information
+      await supabaseApi.updateRoomState(roomId, {
+        video_url: selectedVideo.video_url,
+        video_filename: selectedVideo.video_filename,
+        current_video_index: index,
+        position: 0,
+        paused: true
+      });
+      
       setCurrentVideoIndex(index);
+      
+      toast({
+        title: "Video selected",
+        description: `Now playing: ${selectedVideo.video_filename}`,
+      });
     } catch (error: any) {
+      console.error('Video switch error:', error);
       toast({
         title: "Failed to switch video",
         description: error.message,
@@ -139,7 +180,10 @@ export default function Room() {
         }
         
         setMembers(members);
+        
+        // Load room videos after setting up initial state
         await loadRoomVideos();
+        
         setConnected(true);
         
         // Setup real-time subscriptions
@@ -167,10 +211,30 @@ export default function Room() {
           setMembers(newMembers);
         });
         
+        // Subscribe to room videos changes
+        const videosChannel = supabase
+          .channel(`room-videos-${roomId}`)
+          .on(
+            'postgres_changes',
+            {
+              event: '*',
+              schema: 'public',
+              table: 'room_videos',
+              filter: `room_id=eq.${roomId}`
+            },
+            (payload) => {
+              console.log('Room videos changed:', payload);
+              // Reload videos when there are changes
+              loadRoomVideos();
+            }
+          )
+          .subscribe();
+        
         // Cleanup function
         return () => {
           roomStateChannel?.unsubscribe();
           membersChannel?.unsubscribe();
+          videosChannel?.unsubscribe();
         };
         
       } catch (error: any) {

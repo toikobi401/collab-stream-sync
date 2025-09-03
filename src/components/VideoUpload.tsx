@@ -21,7 +21,6 @@ export const VideoUpload: React.FC<VideoUploadProps> = ({
   const [uploadProgress, setUploadProgress] = useState(0);
   const [urlInput, setUrlInput] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
   const hostState = useHostState();
   const { toast } = useToast();
 
@@ -69,24 +68,41 @@ export const VideoUpload: React.FC<VideoUploadProps> = ({
         setUploadProgress(50);
       }
 
-      // Extract video duration for each uploaded video
-      for (const result of uploadResults) {
+      // Extract video duration for each uploaded video with sequential processing
+      for (let i = 0; i < uploadResults.length; i++) {
+        const result = uploadResults[i];
+        console.log(`Processing video ${i + 1}/${uploadResults.length}:`, result.videoId);
+        
+        // Add delay between extractions to prevent conflicts
+        if (i > 0) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+        
         await extractVideoDuration(result.url, result.videoId);
       }
       
       setUploadProgress(100);
 
       toast({
-        title: "Upload successful",
-        description: `${fileArray.length} video(s) uploaded successfully`,
+        title: "Upload successful", 
+        description: `${fileArray.length} video(s) uploaded successfully. Extracting video duration...`,
       });
       
+      // Call onVideoUploaded to refresh the playlist immediately
       onVideoUploaded();
       
       // Reset file input
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
+      
+      // Show duration extraction completion
+      setTimeout(() => {
+        toast({
+          title: "Processing complete",
+          description: "Video duration extraction completed",
+        });
+      }, 2000);
     } catch (error: any) {
       toast({
         title: "Upload failed",
@@ -101,36 +117,78 @@ export const VideoUpload: React.FC<VideoUploadProps> = ({
 
   const extractVideoDuration = async (videoUrl: string, videoId: string): Promise<void> => {
     return new Promise<void>((resolve) => {
-      if (!videoRef.current) {
+      console.log('Starting duration extraction for video:', videoId, videoUrl);
+      
+      // Create a new video element for each extraction to avoid conflicts
+      const video = document.createElement('video');
+      video.crossOrigin = 'anonymous';
+      video.preload = 'metadata';
+      video.muted = true; // Required for autoplay policies
+      
+      let timeoutId: NodeJS.Timeout;
+      let isResolved = false;
+      
+      const cleanup = () => {
+        if (isResolved) return;
+        isResolved = true;
+        
+        video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+        video.removeEventListener('error', handleError);
+        video.removeEventListener('canplaythrough', handleCanPlay);
+        video.src = '';
+        video.load();
+        
+        if (timeoutId) clearTimeout(timeoutId);
         resolve();
-        return;
-      }
-
-      const video = videoRef.current;
+      };
       
       const handleLoadedMetadata = async () => {
+        console.log('Video metadata loaded for:', videoId, 'Duration:', video.duration);
+        
         try {
           if (video.duration && !isNaN(video.duration) && isFinite(video.duration)) {
+            console.log('Updating video duration in database:', video.duration);
             await supabaseApi.updateVideoDuration(videoId, video.duration);
+            console.log('Duration updated successfully for video:', videoId);
+          } else {
+            console.warn('Invalid duration for video:', videoId, video.duration);
           }
         } catch (error) {
-          console.error('Failed to update video duration:', error);
+          console.error('Failed to update video duration for video:', videoId, error);
         } finally {
-          video.removeEventListener('loadedmetadata', handleLoadedMetadata);
-          video.removeEventListener('error', handleError);
-          resolve();
+          cleanup();
         }
       };
 
-      const handleError = () => {
-        video.removeEventListener('loadedmetadata', handleLoadedMetadata);
-        video.removeEventListener('error', handleError);
-        resolve();
+      const handleCanPlay = async () => {
+        console.log('Video can play for:', videoId, 'Duration:', video.duration);
+        if (!isResolved && video.duration && !isNaN(video.duration) && isFinite(video.duration)) {
+          handleLoadedMetadata();
+        }
       };
+
+      const handleError = (event: Event) => {
+        console.error('Video loading error for:', videoId, event);
+        cleanup();
+      };
+
+      // Set timeout to prevent hanging
+      timeoutId = setTimeout(() => {
+        console.warn('Duration extraction timeout for video:', videoId);
+        cleanup();
+      }, 10000); // 10 second timeout
 
       video.addEventListener('loadedmetadata', handleLoadedMetadata);
       video.addEventListener('error', handleError);
-      video.src = videoUrl;
+      video.addEventListener('canplaythrough', handleCanPlay);
+      
+      // Add delay before setting src to ensure video is ready
+      setTimeout(() => {
+        if (!isResolved) {
+          console.log('Setting video source:', videoUrl);
+          video.src = videoUrl;
+        }
+      }, 100);
     });
   };
 
@@ -174,9 +232,6 @@ export const VideoUpload: React.FC<VideoUploadProps> = ({
 
   return (
     <>
-      {/* Hidden video element for duration extraction */}
-      <video ref={videoRef} style={{ display: 'none' }} />
-      
       <Card className="gradient-card border-card-border">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
