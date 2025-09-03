@@ -168,7 +168,8 @@ export default function Room() {
             paused: roomState.paused,
             position: roomState.position,
             playbackRate: roomState.playback_rate,
-            hostId: roomState.host_user_id || undefined
+            hostId: roomState.host_user_id || undefined,
+            lastUpdated: new Date(roomState.updated_at).getTime()
           });
           
           setHostState({
@@ -196,7 +197,8 @@ export default function Room() {
             paused: newState.paused,
             position: newState.position,
             playbackRate: newState.playback_rate,
-            hostId: newState.host_user_id || undefined
+            hostId: newState.host_user_id || undefined,
+            lastUpdated: new Date(newState.updated_at).getTime()
           });
           
           setHostState({

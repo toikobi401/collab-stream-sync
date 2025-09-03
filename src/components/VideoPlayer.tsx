@@ -43,6 +43,7 @@ export function VideoPlayer() {
   const updateVideoTime = useStore(state => state.updateVideoTime);
   const updateDrift = useStore(state => state.updateDrift);
   const setConnectionState = useStore(state => state.setConnectionState);
+  const setVideoState = useStore(state => state.setVideoState);
 
   // Calculate server time sync with RTT measurement
   const syncServerTime = useCallback(async () => {
@@ -222,9 +223,9 @@ export function VideoPlayer() {
     }
   };
 
-  // Enhanced seek with compensation and smooth transition
+  // Enhanced seek with full state synchronization
   const handleSeek = async (newTime: number) => {
-    if (!hostState.isHost || !room) return;
+    if (!hostState.isHost || !room || isUpdatingState) return;
     
     setIsSeeking(true);
     setLocalTime(newTime);
@@ -234,31 +235,59 @@ export function VideoPlayer() {
       playerRef.current.currentTime = newTime;
     }
     
+    setIsUpdatingState(true);
+    
     try {
       // Compensate for network delay when seeking
       const networkDelay = connectionState.rtt / 2;
       const compensatedTime = newTime + (networkDelay / 1000);
+      const serverTime = Date.now() + serverTimeOffset;
       
-      await supabaseApi.updateRoomState(room.id, {
-        position: compensatedTime,
-        updated_at: new Date().toISOString()
-      });
-      
-      console.log('Seek broadcast:', {
+      console.log('🎯 Seek operation (HOST):', {
         requestedTime: newTime,
         compensatedTime,
         networkDelay,
-        rtt: connectionState.rtt
+        rtt: connectionState.rtt,
+        isHost: hostState.isHost,
+        currentPaused: videoState.paused,
+        serverTime
       });
+      
+      // Full state broadcast including current play/pause state
+      const updateData = {
+        position: compensatedTime,
+        paused: videoState.paused, // Keep current play/pause state
+        playback_rate: videoState.playbackRate || 1.0,
+        updated_at: new Date(serverTime).toISOString()
+      };
+      
+      const result = await supabaseApi.updateRoomState(room.id, updateData);
+      
+      console.log('🚀 Seek broadcast result:', result);
+      
+      // Update local store immediately for responsiveness
+      setVideoState({
+        position: compensatedTime
+      });
+      
+      toast({
+        title: "Video seeked", 
+        description: `Jumped to ${formatTime(newTime)}`,
+      });
+      
     } catch (error: any) {
+      console.error('❌ Seek error:', error);
       toast({
         title: "Seek error", 
         description: error.message,
         variant: "destructive"
       });
+    } finally {
+      setTimeout(() => {
+        setIsSeeking(false);
+        setIsUpdatingState(false);
+      }, 300); // Shorter debounce for better responsiveness
     }
-    
-    setTimeout(() => setIsSeeking(false), 200); // Slightly longer debounce
   };
 
   const handleSkip = async (seconds: number) => {
@@ -267,6 +296,60 @@ export function VideoPlayer() {
     const currentTime = playerRef.current.currentTime;
     const newTime = Math.max(0, Math.min(duration, currentTime + seconds));
     await handleSeek(newTime);
+  };
+
+  // Handle playback rate change with full sync
+  const handlePlaybackRateChange = async (newRate: number) => {
+    if (!hostState.isHost || !room || isUpdatingState) return;
+    
+    setIsUpdatingState(true);
+    
+    try {
+      const currentPos = playerRef.current ? 
+        playerRef.current.currentTime : localTime;
+      
+      console.log('Playback rate change:', {
+        oldRate: videoState.playbackRate,
+        newRate: newRate,
+        currentPos,
+        isHost: hostState.isHost
+      });
+      
+      // Update both rate and position for precise sync
+      const updateData = {
+        playback_rate: newRate,
+        position: currentPos,
+        updated_at: new Date().toISOString()
+      };
+      
+      console.log('Updating room state with rate:', updateData);
+      
+      const result = await supabaseApi.updateRoomState(room.id, updateData);
+      
+      console.log('Playback rate update result:', result);
+      
+      // Apply rate change locally immediately for smooth UX
+      if (playerRef.current) {
+        playerRef.current.playbackRate = newRate;
+      }
+      
+      toast({
+        title: "Speed changed",
+        description: `Playback speed set to ${newRate}x`,
+      });
+      
+    } catch (error: any) {
+      console.error('Playback rate change error:', error);
+      toast({
+        title: "Speed change error",
+        description: error.message,
+        variant: "destructive"
+      });
+    } finally {
+      setTimeout(() => {
+        setIsUpdatingState(false);
+      }, 500);
+    }
   };
 
   // Enhanced sync with time-based compensation
@@ -333,11 +416,22 @@ export function VideoPlayer() {
       playerRef.current.pause();
     }
     
-    // Set volume and playback rate
+    // Set volume and playback rate with logging
     playerRef.current.volume = volume;
-    playerRef.current.playbackRate = videoState.playbackRate || 1.0;
     
-    // Smart position sync for non-hosts
+    // Sync playback rate when it changes
+    const currentRate = playerRef.current.playbackRate;
+    const targetRate = videoState.playbackRate || 1.0;
+    if (Math.abs(currentRate - targetRate) > 0.01) {
+      console.log('Syncing playback rate:', {
+        currentRate,
+        targetRate,
+        isHost: hostState.isHost
+      });
+      playerRef.current.playbackRate = targetRate;
+    }
+    
+    // Enhanced position sync for non-hosts with seeking detection
     if (!isSeeking && !hostState.isHost && videoState.position !== undefined) {
       const actualPosition = playerRef.current.currentTime;
       
@@ -359,22 +453,63 @@ export function VideoPlayer() {
       
       const timeDiff = Math.abs(actualPosition - expectedPosition);
       
-      // Apply different sync strategies based on difference
-      if (timeDiff > 5) {
+      // Detect if this is a seeking operation (large sudden jump)
+      const isLikelySeek = timeDiff > 3 || 
+                          (timeSinceUpdate < 1 && timeDiff > 0.5) ||
+                          (videoState.lastUpdated && videoState.lastUpdated > lastStateUpdate);
+      
+      console.log('📊 Member sync analysis:', {
+        actualPosition: actualPosition.toFixed(2),
+        expectedPosition: expectedPosition.toFixed(2),
+        timeDiff: timeDiff.toFixed(2),
+        timeSinceUpdate: timeSinceUpdate.toFixed(2),
+        isLikelySeek,
+        paused: videoState.paused,
+        lastUpdate: videoState.lastUpdated
+      });
+      
+      // Apply different sync strategies based on difference and type
+      if (isLikelySeek) {
+        // Seeking detected - immediate sync with smooth transition
+        console.log('🎯 Seeking detected, immediate sync:', {
+          from: actualPosition.toFixed(2),
+          to: expectedPosition.toFixed(2),
+          diff: timeDiff.toFixed(2)
+        });
+        playerRef.current.currentTime = expectedPosition;
+        setLocalTime(expectedPosition);
+        
+        // Brief pause for smooth seeking experience
+        if (!videoState.paused) {
+          const wasPaused = playerRef.current.paused;
+          playerRef.current.pause();
+          setTimeout(() => {
+            if (playerRef.current && !wasPaused && !videoState.paused) {
+              playerRef.current.play();
+            }
+          }, 100);
+        }
+        
+      } else if (timeDiff > 5) {
         // Large difference - immediate sync
-        console.log('Large difference, immediate sync:', timeDiff);
+        console.log('⚡ Large difference, immediate sync:', timeDiff.toFixed(2));
         playerRef.current.currentTime = expectedPosition;
         setLocalTime(expectedPosition);
       } else if (timeDiff > 1) {
         // Medium difference - smooth sync
-        console.log('Medium difference, smooth sync:', timeDiff);
+        console.log('🔄 Medium difference, smooth sync:', timeDiff.toFixed(2));
         const smoothTarget = actualPosition + (expectedPosition - actualPosition) * 0.3;
         playerRef.current.currentTime = smoothTarget;
         setLocalTime(smoothTarget);
       }
       // Small differences (< 1 second) are handled by drift correction
     }
-  }, [videoState.paused, videoState.position, videoState.videoUrl, videoState.playbackRate, videoState.lastUpdated, localTime, isSeeking, hostState.isHost, lastStateUpdate, volume, connectionState.rtt]);
+    
+    // Update last state update timestamp
+    if (videoState.lastUpdated && videoState.lastUpdated !== lastStateUpdate) {
+      setLastStateUpdate(videoState.lastUpdated);
+    }
+  }, [videoState.paused, videoState.position, videoState.videoUrl, videoState.playbackRate, videoState.lastUpdated, localTime, isSeeking, hostState.isHost, lastStateUpdate, volume, connectionState.rtt, setVideoState]);
 
   // Force duration load when video URL changes
   useEffect(() => {
@@ -436,15 +571,17 @@ export function VideoPlayer() {
     hasPlayerRef: !!playerRef.current
   });
 
-  // Track videoState changes
+  // Track videoState changes with detailed logging
   useEffect(() => {
     console.log('VideoPlayer videoState changed:', {
       paused: videoState.paused,
       position: videoState.position,
+      playbackRate: videoState.playbackRate,
       videoUrl: videoState.videoUrl,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      isHost: hostState.isHost
     });
-  }, [videoState.paused, videoState.position, videoState.videoUrl]);
+  }, [videoState.paused, videoState.position, videoState.playbackRate, videoState.videoUrl, hostState.isHost]);
 
   if (!videoState.videoUrl) {
     return (
@@ -569,6 +706,13 @@ export function VideoPlayer() {
                 HOST
               </Badge>
             )}
+            
+            {/* Playback Rate Badge */}
+            {videoState.playbackRate && videoState.playbackRate !== 1 && (
+              <Badge variant="secondary" className="bg-black/50 backdrop-blur-sm border-accent/50">
+                {videoState.playbackRate}x speed
+              </Badge>
+            )}
           </div>
           
           {/* Video filename overlay */}
@@ -597,11 +741,31 @@ export function VideoPlayer() {
               step={0.1}
               onValueChange={([value]) => {
                 if (hostState.isHost) {
+                  console.log('🎛️ Slider dragging (HOST):', {
+                    newTime: value.toFixed(2),
+                    currentTime: localTime.toFixed(2),
+                    duration: duration.toFixed(2)
+                  });
+                  
                   setLocalTime(value);
+                  setIsSeeking(true); // Mark as seeking during drag
+                  
+                  // Apply seek locally immediately for smooth UX
+                  if (playerRef.current) {
+                    playerRef.current.currentTime = value;
+                  }
+                }
+              }}
+              onValueCommit={([value]) => {
+                if (hostState.isHost) {
+                  console.log('🎯 Slider commit (HOST) - Broadcasting seek:', {
+                    seekTime: value.toFixed(2),
+                    wasLocalTime: localTime.toFixed(2)
+                  });
                   handleSeek(value);
                 }
               }}
-              disabled={!hostState.isHost}
+              disabled={!hostState.isHost || isUpdatingState}
               className="w-full"
             />
           </div>
@@ -684,13 +848,8 @@ export function VideoPlayer() {
                   key={rate}
                   variant={videoState.playbackRate === rate ? "default" : "outline"}
                   size="sm"
-                  onClick={async () => {
-                    if (room) {
-                      await supabaseApi.updateRoomState(room.id, {
-                        playback_rate: rate
-                      });
-                    }
-                  }}
+                  onClick={() => handlePlaybackRateChange(rate)}
+                  disabled={isUpdatingState}
                 >
                   {rate}x
                 </Button>
