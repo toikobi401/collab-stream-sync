@@ -800,13 +800,13 @@ export function VideoPlayer() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3 sm:space-y-4 max-w-full overflow-hidden">
       {/* Video Player */}
       <Card className="gradient-card border-card-border overflow-hidden">
         <div 
           ref={videoContainerRef}
           className={cn(
-            "relative aspect-video bg-black",
+            "relative aspect-video bg-black w-full",
             isFullscreen && "fixed inset-0 z-50 bg-black aspect-auto flex items-center justify-center",
             isFullscreen && !showFullscreenControls && "cursor-none"
           )}
@@ -880,53 +880,57 @@ export function VideoPlayer() {
           />
           
           {/* Sync Status Overlay */}
-          <div className="absolute top-4 right-4 flex gap-2">
+          <div className="absolute top-2 sm:top-4 right-2 sm:right-4 flex flex-col sm:flex-row gap-1 sm:gap-2">
             {/* Connection Status */}
             <Badge 
               variant="outline" 
               className={cn(
-                "bg-black/50 backdrop-blur-sm",
+                "bg-black/50 backdrop-blur-sm text-xs sm:text-sm",
                 connectionState.rtt > 200 ? "border-destructive/50 text-destructive" : 
                 connectionState.rtt > 100 ? "border-warning/50 text-warning" : 
                 "border-success/50 text-success"
               )}
             >
-              {connectionState.rtt > 200 ? <WifiOff className="w-3 h-3 mr-1" /> : <Wifi className="w-3 h-3 mr-1" />}
-              {connectionState.rtt}ms
+              {connectionState.rtt > 200 ? <WifiOff className="w-2 h-2 sm:w-3 sm:h-3 mr-1" /> : <Wifi className="w-2 h-2 sm:w-3 sm:h-3 mr-1" />}
+              <span className="hidden sm:inline">{connectionState.rtt}ms</span>
+              <span className="sm:hidden">{connectionState.rtt}</span>
             </Badge>
             
-            {/* Drift Status */}
-            <Badge 
-              variant="secondary" 
-              className={cn(
-                "bg-black/50 backdrop-blur-sm",
-                (connectionState.drift || 0) > 2000 ? "border-destructive/50 text-destructive" : 
-                (connectionState.drift || 0) > 500 ? "border-warning/50 text-warning" : 
-                "border-success/50 text-success"
-              )}
-            >
-              {(connectionState.drift || 0).toFixed(0)}ms drift
-            </Badge>
+            {/* Drift Status - chỉ hiện khi có drift đáng kể */}
+            {(connectionState.drift || 0) > 500 && (
+              <Badge 
+                variant="secondary" 
+                className={cn(
+                  "bg-black/50 backdrop-blur-sm text-xs sm:text-sm",
+                  (connectionState.drift || 0) > 2000 ? "border-destructive/50 text-destructive" : 
+                  (connectionState.drift || 0) > 500 ? "border-warning/50 text-warning" : 
+                  "border-success/50 text-success"
+                )}
+              >
+                <span className="hidden sm:inline">{(connectionState.drift || 0).toFixed(0)}ms drift</span>
+                <span className="sm:hidden">{(connectionState.drift || 0).toFixed(0)}ms</span>
+              </Badge>
+            )}
             
             {/* Host Badge */}
             {hostState.isHost && (
-              <Badge variant="default" className="bg-primary/80 backdrop-blur-sm">
+              <Badge variant="default" className="bg-primary/80 backdrop-blur-sm text-xs sm:text-sm">
                 HOST
               </Badge>
             )}
             
-            {/* Playback Rate Badge */}
+            {/* Playback Rate Badge - chỉ hiện khi khác 1x */}
             {videoState.playbackRate && videoState.playbackRate !== 1 && (
-              <Badge variant="secondary" className="bg-black/50 backdrop-blur-sm border-accent/50">
-                {videoState.playbackRate}x speed
+              <Badge variant="secondary" className="bg-black/50 backdrop-blur-sm border-accent/50 text-xs sm:text-sm">
+                {videoState.playbackRate}x
               </Badge>
             )}
           </div>
           
           {/* Video filename overlay */}
-          {videoState.videoFilename && (
-            <div className="absolute bottom-4 left-4">
-              <Badge variant="outline" className="bg-black/50 backdrop-blur-sm">
+          {videoState.videoFilename && !isFullscreen && (
+            <div className="absolute bottom-2 sm:bottom-4 left-2 sm:left-4">
+              <Badge variant="outline" className="bg-black/50 backdrop-blur-sm text-xs sm:text-sm max-w-48 sm:max-w-64 truncate">
                 {videoState.videoFilename}
               </Badge>
             </div>
@@ -936,18 +940,28 @@ export function VideoPlayer() {
           {isFullscreen && (
             <div 
               className={cn(
-                "absolute inset-0 flex flex-col justify-between p-4 bg-gradient-to-t from-black/60 via-transparent to-black/60 transition-opacity duration-300",
+                "absolute inset-0 flex flex-col justify-between p-2 sm:p-4 bg-gradient-to-t from-black/70 via-transparent to-black/70 transition-opacity duration-300",
                 showFullscreenControls ? "opacity-100" : "opacity-0 pointer-events-none"
               )}
               onMouseMove={handleUserActivity}
               onClick={handleUserActivity}
             >
               {/* Top Controls */}
-              <div className="flex justify-between items-start">
-                <div className="flex gap-2">
+              <div className="flex justify-between items-start px-2 sm:px-4">
+                <div className="flex gap-1 sm:gap-2 flex-wrap">
                   {videoState.videoFilename && (
-                    <Badge variant="outline" className="bg-black/70 backdrop-blur-sm text-white border-white/20">
+                    <Badge variant="outline" className="bg-black/70 backdrop-blur-sm text-white border-white/20 text-xs sm:text-sm max-w-64 sm:max-w-none truncate">
                       {videoState.videoFilename}
+                    </Badge>
+                  )}
+                  {hostState.isHost && (
+                    <Badge variant="default" className="bg-primary/80 backdrop-blur-sm text-xs sm:text-sm">
+                      HOST
+                    </Badge>
+                  )}
+                  {videoState.playbackRate && videoState.playbackRate !== 1 && (
+                    <Badge variant="secondary" className="bg-black/70 backdrop-blur-sm border-accent/50 text-xs sm:text-sm">
+                      {videoState.playbackRate}x
                     </Badge>
                   )}
                 </div>
@@ -955,16 +969,17 @@ export function VideoPlayer() {
                   variant="ghost"
                   size="sm"
                   onClick={exitFullscreen}
-                  className="text-white hover:bg-white/20"
+                  className="text-white hover:bg-white/20 h-8 w-8 sm:h-9 sm:w-9 flex-shrink-0"
+                  title="Exit fullscreen (ESC)"
                 >
-                  <Minimize className="w-5 h-5" />
+                  <Minimize className="w-4 h-4 sm:w-5 sm:h-5" />
                 </Button>
               </div>
 
               {/* Bottom Controls */}
-              <div className="space-y-4">
+              <div className="space-y-3 sm:space-y-4 px-2 sm:px-4">
                 {/* Progress Bar */}
-                <div className="space-y-2">
+                <div className="space-y-1 sm:space-y-2">
                   <Slider
                     value={[localTime]}
                     max={duration}
@@ -984,31 +999,32 @@ export function VideoPlayer() {
                       }
                     }}
                     disabled={!hostState.isHost || isUpdatingState}
-                    className="w-full"
+                    className="w-full h-2 sm:h-3"
                   />
-                  <div className="flex items-center justify-between text-sm text-white font-mono">
-                    <span>{formatTime(localTime)}</span>
-                    <span>{formatTime(duration)}</span>
+                  <div className="flex items-center justify-between text-xs sm:text-sm text-white font-mono">
+                    <span className="truncate">{formatTime(localTime)}</span>
+                    <span className="truncate">{formatTime(duration)}</span>
                   </div>
                 </div>
 
                 {/* Control Buttons */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-4">
+                  {/* Left Side Controls */}
+                  <div className="flex items-center justify-center gap-2 sm:gap-3 order-1 sm:order-none">
                     {/* Play/Pause */}
                     <Button
                       variant="ghost"
                       size="lg"
                       onClick={handlePlayPause}
                       disabled={!hostState.isHost || isUpdatingState}
-                      className="text-white hover:bg-white/20"
+                      className="text-white hover:bg-white/20 h-10 w-10 sm:h-12 sm:w-12"
                     >
                       {isUpdatingState ? (
-                        <div className="w-6 h-6 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                        <div className="w-5 h-5 sm:w-6 sm:h-6 border-2 border-current border-t-transparent rounded-full animate-spin" />
                       ) : videoState.paused ? (
-                        <Play className="w-6 h-6" />
+                        <Play className="w-5 h-5 sm:w-6 sm:h-6" />
                       ) : (
-                        <Pause className="w-6 h-6" />
+                        <Pause className="w-5 h-5 sm:w-6 sm:h-6" />
                       )}
                     </Button>
 
@@ -1018,56 +1034,77 @@ export function VideoPlayer() {
                       size="sm"
                       onClick={() => handleSkip(-10)}
                       disabled={!hostState.isHost}
-                      className="text-white hover:bg-white/20"
+                      className="text-white hover:bg-white/20 h-8 w-8 sm:h-9 sm:w-auto sm:px-3"
                     >
-                      <SkipBack className="w-4 h-4 mr-1" />
-                      10s
+                      <SkipBack className="w-3 h-3 sm:w-4 sm:h-4" />
+                      <span className="hidden sm:inline ml-1">10s</span>
                     </Button>
                     <Button
                       variant="ghost"
                       size="sm"
                       onClick={() => handleSkip(10)}
                       disabled={!hostState.isHost}
-                      className="text-white hover:bg-white/20"
+                      className="text-white hover:bg-white/20 h-8 w-8 sm:h-9 sm:w-auto sm:px-3"
                     >
-                      <SkipForward className="w-4 h-4 mr-1" />
-                      10s
+                      <SkipForward className="w-3 h-3 sm:w-4 sm:h-4" />
+                      <span className="hidden sm:inline ml-1">10s</span>
                     </Button>
-
-                    {/* Volume */}
-                    <div className="flex items-center gap-2 text-white">
-                      <Volume2 className="w-4 h-4" />
-                      <Slider
-                        value={[volume]}
-                        max={1}
-                        step={0.01}
-                        onValueChange={([value]) => setVolume(value)}
-                        className="w-20"
-                      />
-                      <span className="text-xs w-8">{Math.round(volume * 100)}%</span>
-                    </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  {/* Center Volume Control (Mobile) / Left Volume (Desktop) */}
+                  <div className="flex items-center gap-1 sm:gap-2 text-white min-w-0 flex-1 max-w-full sm:max-w-48 order-2 sm:order-none">
+                    <Volume2 className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
+                    <Slider
+                      value={[volume]}
+                      max={1}
+                      step={0.01}
+                      onValueChange={([value]) => setVolume(value)}
+                      className="flex-1 min-w-0"
+                    />
+                    <span className="text-xs sm:text-sm w-8 sm:w-10 flex-shrink-0 text-right">{Math.round(volume * 100)}%</span>
+                  </div>
+
+                  {/* Right Side Controls */}
+                  <div className="flex items-center gap-2 sm:gap-3 order-3 sm:order-none">
                     {/* Sync button */}
                     <Button
                       variant="ghost"
                       size="sm"
                       onClick={handleSyncNow}
                       disabled={hostState.isHost}
-                      className="text-white hover:bg-white/20"
+                      className="text-white hover:bg-white/20 h-8 w-8 sm:h-9 sm:w-auto sm:px-3"
                     >
-                      <RotateCcw className="w-4 h-4 mr-1" />
-                      Sync
+                      <RotateCcw className="w-3 h-3 sm:w-4 sm:h-4" />
+                      <span className="hidden lg:inline ml-1">Sync</span>
                     </Button>
 
                     {/* Status badges */}
-                    <Badge 
-                      variant="outline" 
-                      className="bg-black/70 text-white border-white/20"
-                    >
-                      {connectionState.rtt}ms
-                    </Badge>
+                    <div className="flex gap-1 sm:gap-2">
+                      <Badge 
+                        variant="outline" 
+                        className={cn(
+                          "bg-black/70 text-white border-white/20 text-xs",
+                          connectionState.rtt > 200 ? "border-destructive/50 text-destructive" : 
+                          connectionState.rtt > 100 ? "border-warning/50 text-warning" : 
+                          "border-success/50 text-success"
+                        )}
+                      >
+                        {connectionState.rtt}ms
+                      </Badge>
+                      
+                      {(connectionState.drift || 0) > 500 && (
+                        <Badge 
+                          variant="outline" 
+                          className={cn(
+                            "bg-black/70 text-white border-white/20 text-xs",
+                            (connectionState.drift || 0) > 2000 ? "border-destructive/50 text-destructive" : 
+                            "border-warning/50 text-warning"
+                          )}
+                        >
+                          {(connectionState.drift || 0).toFixed(0)}ms
+                        </Badge>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1079,12 +1116,12 @@ export function VideoPlayer() {
       {/* Controls (ẩn khi fullscreen) */}
       {!isFullscreen && (
       <Card className="gradient-card border-card-border">
-        <CardContent className="space-y-4 pt-6">
+        <CardContent className="space-y-3 sm:space-y-4 pt-4 sm:pt-6 px-4 sm:px-6">
           {/* Progress Bar */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-sm text-muted-foreground font-mono">
-              <span>{formatTime(localTime)}</span>
-              <span>{formatTime(duration)}</span>
+          <div className="space-y-1 sm:space-y-2">
+            <div className="flex items-center justify-between text-xs sm:text-sm text-muted-foreground font-mono">
+              <span className="truncate min-w-0">{formatTime(localTime)}</span>
+              <span className="truncate min-w-0">{formatTime(duration)}</span>
             </div>
             <Slider
               value={[localTime]}
@@ -1122,17 +1159,18 @@ export function VideoPlayer() {
           </div>
 
           {/* Control Buttons */}
-          <div className="flex flex-col sm:flex-row items-center gap-4">
-            {/* Main Controls */}
-            <div className="flex items-center gap-2 flex-1">
+          <div className="space-y-3">
+            {/* Primary Controls Row */}
+            <div className="flex items-center justify-center gap-2 sm:gap-3">
               {/* Skip backwards */}
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => handleSkip(-10)}
                 disabled={!hostState.isHost}
+                className="h-8 w-8 sm:h-9 sm:w-auto sm:px-3"
               >
-                <SkipBack className="w-4 h-4" />
+                <SkipBack className="w-3 h-3 sm:w-4 sm:h-4" />
                 <span className="hidden sm:inline ml-1">10s</span>
               </Button>
               
@@ -1142,13 +1180,14 @@ export function VideoPlayer() {
                 size="sm"
                 onClick={handlePlayPause}
                 disabled={!hostState.isHost || isUpdatingState}
+                className="h-10 w-10 sm:h-11 sm:w-11"
               >
                 {isUpdatingState ? (
-                  <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                  <div className="w-4 h-4 sm:w-5 sm:h-5 border-2 border-current border-t-transparent rounded-full animate-spin" />
                 ) : videoState.paused ? (
-                  <Play className="w-4 h-4" />
+                  <Play className="w-4 h-4 sm:w-5 sm:h-5" />
                 ) : (
-                  <Pause className="w-4 h-4" />
+                  <Pause className="w-4 h-4 sm:w-5 sm:h-5" />
                 )}
               </Button>
               
@@ -1158,94 +1197,96 @@ export function VideoPlayer() {
                 size="sm"
                 onClick={() => handleSkip(10)}
                 disabled={!hostState.isHost}
+                className="h-8 w-8 sm:h-9 sm:w-auto sm:px-3"
               >
-                <SkipForward className="w-4 h-4" />
+                <SkipForward className="w-3 h-3 sm:w-4 sm:h-4" />
                 <span className="hidden sm:inline ml-1">10s</span>
-              </Button>
-              
-              {/* Sync button */}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleSyncNow}
-                disabled={hostState.isHost}
-                className="hidden sm:flex"
-              >
-                <RotateCcw className="w-4 h-4 mr-1" />
-                Sync
               </Button>
             </div>
 
-            {/* Secondary Controls */}
-            <div className="flex items-center gap-3">
-              {/* Volume Control */}
-              <div className="flex items-center gap-2">
-                <Volume2 className="w-4 h-4 text-muted-foreground" />
-                <Slider
-                  value={[volume]}
-                  max={1}
-                  step={0.01}
-                  onValueChange={([value]) => setVolume(value)}
-                  className="w-16 sm:w-20"
-                />
-                <span className="text-xs text-muted-foreground w-6 sm:w-8">
-                  {Math.round(volume * 100)}%
-                </span>
+            {/* Secondary Controls Row */}
+            <div className="flex items-center justify-between gap-2 sm:gap-4">
+              {/* Left Side Controls */}
+              <div className="flex items-center gap-2 sm:gap-3 flex-1">
+                {/* Sync button */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleSyncNow}
+                  disabled={hostState.isHost}
+                  className="h-8 w-8 sm:h-9 sm:w-auto sm:px-3"
+                  title="Sync with others"
+                >
+                  <RotateCcw className="w-3 h-3 sm:w-4 sm:h-4" />
+                  <span className="hidden lg:inline ml-1">Sync</span>
+                </Button>
+
+                {/* Volume Control */}
+                <div className="flex items-center gap-1 sm:gap-2 min-w-0 flex-1 max-w-32 sm:max-w-40">
+                  <Volume2 className="w-3 h-3 sm:w-4 sm:h-4 text-muted-foreground flex-shrink-0" />
+                  <Slider
+                    value={[volume]}
+                    max={1}
+                    step={0.01}
+                    onValueChange={([value]) => setVolume(value)}
+                    className="flex-1 min-w-0"
+                  />
+                  <span className="text-xs text-muted-foreground w-6 sm:w-8 flex-shrink-0 text-right">
+                    {Math.round(volume * 100)}%
+                  </span>
+                </div>
               </div>
 
-              {/* Fullscreen Control */}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={toggleFullscreen}
-                title={isFullscreen ? "Exit fullscreen (f)" : "Enter fullscreen (f)"}
-                className="flex-shrink-0"
-              >
-                {isFullscreen ? (
-                  <Minimize className="w-4 h-4" />
-                ) : (
-                  <Maximize className="w-4 h-4" />
-                )}
-              </Button>
-
-              {/* Mobile Sync button */}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleSyncNow}
-                disabled={hostState.isHost}
-                className="sm:hidden flex-shrink-0"
-                title="Sync"
-              >
-                <RotateCcw className="w-4 h-4" />
-              </Button>
+              {/* Right Side Controls */}
+              <div className="flex items-center gap-2">
+                {/* Fullscreen Control */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={toggleFullscreen}
+                  title={isFullscreen ? "Exit fullscreen (f)" : "Enter fullscreen (f)"}
+                  className="h-8 w-8 sm:h-9 sm:w-9 flex-shrink-0"
+                >
+                  {isFullscreen ? (
+                    <Minimize className="w-3 h-3 sm:w-4 sm:h-4" />
+                  ) : (
+                    <Maximize className="w-3 h-3 sm:w-4 sm:h-4" />
+                  )}
+                </Button>
+              </div>
             </div>
           </div>
           
           {/* Playback Rate Control (Host only) */}
           {hostState.isHost && (
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">Speed:</span>
-              {[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) => (
-                <Button
-                  key={rate}
-                  variant={videoState.playbackRate === rate ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => handlePlaybackRateChange(rate)}
-                  disabled={isUpdatingState}
-                >
-                  {rate}x
-                </Button>
-              ))}
+            <div className="space-y-2">
+              <span className="text-sm text-muted-foreground block sm:hidden">Playback Speed:</span>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm text-muted-foreground hidden sm:block">Speed:</span>
+                <div className="flex items-center gap-1 sm:gap-2 flex-wrap">
+                  {[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) => (
+                    <Button
+                      key={rate}
+                      variant={videoState.playbackRate === rate ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => handlePlaybackRateChange(rate)}
+                      disabled={isUpdatingState}
+                      className="h-8 px-2 sm:px-3 text-xs sm:text-sm min-w-0 flex-shrink-0"
+                    >
+                      {rate}x
+                    </Button>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
           
           {/* Sync Information Panel */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2 border-t border-border/50">
-            <div className="text-center">
-              <div className="text-xs text-muted-foreground">Drift</div>
+          <div className="grid grid-cols-3 gap-2 sm:gap-3 pt-3 border-t border-border/50">
+            <div className="text-center min-w-0">
+              <div className="text-xs text-muted-foreground truncate">Drift</div>
               <div className={cn(
-                "text-sm font-mono font-medium",
+                "text-xs sm:text-sm font-mono font-medium truncate",
                 (connectionState.drift || 0) > 2000 ? "text-destructive" : 
                 (connectionState.drift || 0) > 500 ? "text-warning" : 
                 "text-success"
@@ -1254,10 +1295,10 @@ export function VideoPlayer() {
               </div>
             </div>
             
-            <div className="text-center">
-              <div className="text-xs text-muted-foreground">Network RTT</div>
+            <div className="text-center min-w-0">
+              <div className="text-xs text-muted-foreground truncate">Network</div>
               <div className={cn(
-                "text-sm font-mono font-medium",
+                "text-xs sm:text-sm font-mono font-medium truncate",
                 connectionState.rtt > 200 ? "text-destructive" : 
                 connectionState.rtt > 100 ? "text-warning" : 
                 "text-success"
@@ -1266,10 +1307,10 @@ export function VideoPlayer() {
               </div>
             </div>
             
-            <div className="text-center">
-              <div className="text-xs text-muted-foreground">Last Sync</div>
-              <div className="text-sm font-mono font-medium text-muted-foreground">
-                {Math.round((Date.now() - connectionState.lastSync) / 1000)}s ago
+            <div className="text-center min-w-0">
+              <div className="text-xs text-muted-foreground truncate">Sync</div>
+              <div className="text-xs sm:text-sm font-mono font-medium text-muted-foreground truncate">
+                {Math.round((Date.now() - connectionState.lastSync) / 1000)}s
               </div>
             </div>
           </div>
