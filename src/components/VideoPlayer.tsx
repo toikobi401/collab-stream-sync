@@ -1122,8 +1122,9 @@ export function VideoPlayer() {
           </div>
 
           {/* Control Buttons */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
+          <div className="flex flex-col sm:flex-row items-center gap-4">
+            {/* Main Controls */}
+            <div className="flex items-center gap-2 flex-1">
               {/* Skip backwards */}
               <Button
                 variant="outline"
@@ -1132,7 +1133,7 @@ export function VideoPlayer() {
                 disabled={!hostState.isHost}
               >
                 <SkipBack className="w-4 h-4" />
-                10s
+                <span className="hidden sm:inline ml-1">10s</span>
               </Button>
               
               {/* Play/Pause */}
@@ -1159,7 +1160,7 @@ export function VideoPlayer() {
                 disabled={!hostState.isHost}
               >
                 <SkipForward className="w-4 h-4" />
-                10s
+                <span className="hidden sm:inline ml-1">10s</span>
               </Button>
               
               {/* Sync button */}
@@ -1168,40 +1169,55 @@ export function VideoPlayer() {
                 size="sm"
                 onClick={handleSyncNow}
                 disabled={hostState.isHost}
+                className="hidden sm:flex"
               >
                 <RotateCcw className="w-4 h-4 mr-1" />
                 Sync
               </Button>
             </div>
 
-            {/* Volume Control */}
-            <div className="flex items-center gap-2">
-              <Volume2 className="w-4 h-4 text-muted-foreground" />
-              <Slider
-                value={[volume]}
-                max={1}
-                step={0.01}
-                onValueChange={([value]) => setVolume(value)}
-                className="w-20"
-              />
-              <span className="text-xs text-muted-foreground w-8">
-                {Math.round(volume * 100)}%
-              </span>
-            </div>
+            {/* Secondary Controls */}
+            <div className="flex items-center gap-3">
+              {/* Volume Control */}
+              <div className="flex items-center gap-2">
+                <Volume2 className="w-4 h-4 text-muted-foreground" />
+                <Slider
+                  value={[volume]}
+                  max={1}
+                  step={0.01}
+                  onValueChange={([value]) => setVolume(value)}
+                  className="w-16 sm:w-20"
+                />
+                <span className="text-xs text-muted-foreground w-6 sm:w-8">
+                  {Math.round(volume * 100)}%
+                </span>
+              </div>
 
-            {/* Fullscreen Control */}
-            <div className="flex items-center">
+              {/* Fullscreen Control */}
               <Button
                 variant="outline"
                 size="sm"
                 onClick={toggleFullscreen}
                 title={isFullscreen ? "Exit fullscreen (f)" : "Enter fullscreen (f)"}
+                className="flex-shrink-0"
               >
                 {isFullscreen ? (
                   <Minimize className="w-4 h-4" />
                 ) : (
                   <Maximize className="w-4 h-4" />
                 )}
+              </Button>
+
+              {/* Mobile Sync button */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleSyncNow}
+                disabled={hostState.isHost}
+                className="sm:hidden flex-shrink-0"
+                title="Sync"
+              >
+                <RotateCcw className="w-4 h-4" />
               </Button>
             </div>
           </div>
