@@ -58,20 +58,36 @@ export const VideoUpload: React.FC<VideoUploadProps> = ({
       let uploadResults: { url: string; videoId: string }[] = [];
       
       if (fileArray.length === 1) {
-        // Single file upload
-        const result = await supabaseApi.uploadVideo(roomId, fileArray[0]);
+        // Single file upload với progress callback
+        const result = await supabaseApi.uploadVideo(
+          roomId, 
+          fileArray[0],
+          (progress) => {
+            // Progress từ 0-90% cho upload, 90-100% cho duration extraction
+            setUploadProgress(Math.round(progress * 0.9));
+          }
+        );
         uploadResults = [result];
-        setUploadProgress(50);
       } else {
-        // Multiple file upload
-        uploadResults = await supabaseApi.uploadMultipleVideos(roomId, fileArray);
-        setUploadProgress(50);
+        // Multiple file upload với progress callback
+        uploadResults = await supabaseApi.uploadMultipleVideos(
+          roomId, 
+          fileArray,
+          (progress) => {
+            // Progress từ 0-90% cho upload, 90-100% cho duration extraction  
+            setUploadProgress(Math.round(progress * 0.9));
+          }
+        );
       }
 
       // Extract video duration for each uploaded video with sequential processing
       for (let i = 0; i < uploadResults.length; i++) {
         const result = uploadResults[i];
         console.log(`Processing video ${i + 1}/${uploadResults.length}:`, result.videoId);
+        
+        // Update progress for duration extraction (90-100%)
+        const extractionProgress = 90 + ((i + 1) / uploadResults.length) * 10;
+        setUploadProgress(Math.round(extractionProgress));
         
         // Add delay between extractions to prevent conflicts
         if (i > 0) {
@@ -246,7 +262,7 @@ export const VideoUpload: React.FC<VideoUploadProps> = ({
             <Input
               ref={fileInputRef}
               type="file"
-              accept="video/*"
+              accept="video/*,.mkv"
               multiple
               onChange={(e) => handleFileUpload(e.target.files)}
               disabled={isUploading}
@@ -295,7 +311,7 @@ export const VideoUpload: React.FC<VideoUploadProps> = ({
         <div className="text-xs text-muted-foreground space-y-1">
           <p>• Maximum 5 videos per room</p>
           <p>• Total size limit: 10GB</p>
-          <p>• Supported formats: MP4, WebM, OGG, HLS</p>
+          <p>• Supported formats: MP4, WebM, OGG, MKV, HLS</p>
         </div>
       </CardContent>
     </Card>

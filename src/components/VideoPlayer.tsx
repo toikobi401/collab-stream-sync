@@ -4,9 +4,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Slider } from '@/components/ui/slider';
 import { Badge } from '@/components/ui/badge';
-import { useStore, useVideoState, useHostState, useConnectionState } from '@/store';
+import { useStore, useVideoState, useHostState, useConnectionState, useProfile } from '@/store';
 import { supabaseApi } from '@/lib/supabase-api';
-import { Play, Pause, RotateCcw, Volume2, SkipForward, SkipBack, Wifi, WifiOff } from 'lucide-react';
+import { Play, Pause, RotateCcw, Volume2, SkipForward, SkipBack, Wifi, WifiOff, Maximize, Minimize } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/components/ui/use-toast';
 
@@ -24,6 +24,7 @@ interface ReactPlayerRef {
 
 export function VideoPlayer() {
   const playerRef = useRef<HTMLVideoElement>(null);
+  const videoContainerRef = useRef<HTMLDivElement>(null);
   const [localTime, setLocalTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(0.8);
@@ -34,9 +35,20 @@ export function VideoPlayer() {
   const [lastStateUpdate, setLastStateUpdate] = useState(0);
   const [isVideoLoading, setIsVideoLoading] = useState(false);
   
+  // Subtitle states
+  const [subtitleTracks, setSubtitleTracks] = useState<TextTrack[]>([]);
+  const [activeSubtitleTrack, setActiveSubtitleTrack] = useState<number>(-1);
+  const [showSubtitleMenu, setShowSubtitleMenu] = useState(false);
+  
+  // Fullscreen states
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showFullscreenControls, setShowFullscreenControls] = useState(true);
+  const hideControlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
   const videoState = useVideoState();
   const hostState = useHostState();
   const connectionState = useConnectionState();
+  const profile = useProfile();
   const room = useStore(state => state.room);
   const { toast } = useToast();
   
@@ -192,15 +204,33 @@ export function VideoPlayer() {
       const currentPos = playerRef.current ? 
         playerRef.current.currentTime : localTime;
       
+      const newPausedState = !videoState.paused;
+      
       console.log('Play/pause clicked:', {
         currentPaused: videoState.paused,
-        newPaused: !videoState.paused,
+        newPaused: newPausedState,
         currentPos,
         isHost: hostState.isHost
       });
       
+      // Optimistic update - cập nhật local state ngay lập tức
+      setVideoState({
+        paused: newPausedState,
+        position: currentPos,
+        lastUpdated: now
+      });
+      
+      // Apply change immediately to video player
+      if (playerRef.current) {
+        if (newPausedState) {
+          playerRef.current.pause();
+        } else {
+          playerRef.current.play().catch(console.error);
+        }
+      }
+      
       const updateData = {
-        paused: !videoState.paused,
+        paused: newPausedState,
         position: currentPos
       };
       
@@ -211,6 +241,12 @@ export function VideoPlayer() {
       console.log('Update result:', result);
     } catch (error: any) {
       console.error('Play/pause error:', error);
+      // Revert optimistic update on error
+      setVideoState({
+        paused: videoState.paused,
+        position: videoState.position,
+        lastUpdated: videoState.lastUpdated
+      });
       toast({
         title: "Control error",
         description: error.message,
@@ -353,42 +389,186 @@ export function VideoPlayer() {
   };
 
   // Enhanced sync with time-based compensation
-  const handleSyncNow = () => {
-    if (playerRef.current && videoState.position !== undefined) {
-      // Calculate expected position based on server time and playback state
-      const serverUpdateTime = new Date(videoState.lastUpdated || 0).getTime();
-      const currentTime = Date.now();
-      const timeSinceUpdate = (currentTime - serverUpdateTime) / 1000;
+  const handleSyncNow = async () => {
+    if (!playerRef.current || !room) return;
+    
+    try {
+      // Lấy position hiện tại của người ấn sync
+      const currentPosition = playerRef.current.currentTime;
       
-      let expectedPosition = videoState.position;
-      
-      // If video is playing, estimate current position
-      if (!videoState.paused && timeSinceUpdate > 0) {
-        const playbackRate = videoState.playbackRate || 1.0;
-        expectedPosition += timeSinceUpdate * playbackRate;
-        
-        // Compensate for network delay
-        const networkDelay = connectionState.rtt / 2000; // Convert to seconds
-        expectedPosition += networkDelay;
-      }
-      
-      playerRef.current.currentTime = expectedPosition;
-      setLocalTime(expectedPosition);
-      updateVideoTime(expectedPosition);
-      
-      console.log('Manual sync performed:', {
-        serverPosition: videoState.position,
-        timeSinceUpdate,
-        expectedPosition,
-        networkCompensation: connectionState.rtt / 2000
+      console.log('🔄 Sync requested by user:', {
+        currentPosition,
+        isHost: hostState.isHost,
+        room: room.id
       });
       
+      // Gửi position hiện tại của người này lên server để tất cả user khác sync theo
+      const updateData = {
+        position: currentPosition,
+        // Giữ nguyên trạng thái play/pause hiện tại
+        paused: videoState.paused
+      };
+      
+      const result = await supabaseApi.updateRoomState(room.id, updateData);
+      
+      console.log('✅ Sync update sent:', result);
+      
+      const displayName = profile?.nickname || 'You';
+      
       toast({
-        title: "Synced",
-        description: `Video synchronized (drift: ${Math.round((expectedPosition - playerRef.current.currentTime) * 1000)}ms)`
+        title: "Sync sent",
+        description: `${displayName} synchronized all users to ${formatTime(currentPosition)}`,
+      });
+      
+    } catch (error: any) {
+      console.error('❌ Sync error:', error);
+      toast({
+        title: "Sync failed",
+        description: error.message || "Failed to synchronize with other users",
+        variant: "destructive"
       });
     }
   };
+
+  // Fullscreen functions (tương tự YouTube)
+  const enterFullscreen = async () => {
+    if (!videoContainerRef.current) return;
+    
+    try {
+      if (videoContainerRef.current.requestFullscreen) {
+        await videoContainerRef.current.requestFullscreen();
+      } else if ((videoContainerRef.current as any).webkitRequestFullscreen) {
+        await (videoContainerRef.current as any).webkitRequestFullscreen();
+      } else if ((videoContainerRef.current as any).msRequestFullscreen) {
+        await (videoContainerRef.current as any).msRequestFullscreen();
+      }
+      setIsFullscreen(true);
+    } catch (error) {
+      console.error('Failed to enter fullscreen:', error);
+      toast({
+        title: "Fullscreen error",
+        description: "Failed to enter fullscreen mode",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const exitFullscreen = async () => {
+    try {
+      if (document.exitFullscreen) {
+        await document.exitFullscreen();
+      } else if ((document as any).webkitExitFullscreen) {
+        await (document as any).webkitExitFullscreen();
+      } else if ((document as any).msExitFullscreen) {
+        await (document as any).msExitFullscreen();
+      }
+      setIsFullscreen(false);
+    } catch (error) {
+      console.error('Failed to exit fullscreen:', error);
+      toast({
+        title: "Fullscreen error", 
+        description: "Failed to exit fullscreen mode",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const toggleFullscreen = () => {
+    if (isFullscreen) {
+      exitFullscreen();
+    } else {
+      enterFullscreen();
+    }
+  };
+
+  // Auto-hide controls functions (tương tự YouTube)
+  const resetHideControlsTimer = useCallback(() => {
+    // Clear existing timeout
+    if (hideControlsTimeoutRef.current) {
+      clearTimeout(hideControlsTimeoutRef.current);
+    }
+
+    // Show controls
+    setShowFullscreenControls(true);
+
+    // Only set hide timer in fullscreen mode
+    if (isFullscreen) {
+      hideControlsTimeoutRef.current = setTimeout(() => {
+        setShowFullscreenControls(false);
+      }, 5000); // 5 giây
+    }
+  }, [isFullscreen]);
+
+  const handleUserActivity = useCallback(() => {
+    if (isFullscreen) {
+      resetHideControlsTimer();
+    }
+  }, [isFullscreen, resetHideControlsTimer]);
+
+  // Reset timer when entering fullscreen
+  useEffect(() => {
+    if (isFullscreen) {
+      setShowFullscreenControls(true);
+      resetHideControlsTimer();
+    } else {
+      // Clear timer when exiting fullscreen
+      if (hideControlsTimeoutRef.current) {
+        clearTimeout(hideControlsTimeoutRef.current);
+        hideControlsTimeoutRef.current = null;
+      }
+      setShowFullscreenControls(true);
+    }
+  }, [isFullscreen, resetHideControlsTimer]);
+
+  // Listen for fullscreen changes
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const isCurrentlyFullscreen = !!(
+        document.fullscreenElement ||
+        (document as any).webkitFullscreenElement ||
+        (document as any).msFullscreenElement
+      );
+      setIsFullscreen(isCurrentlyFullscreen);
+    };
+
+    const handleKeyPress = (event: KeyboardEvent) => {
+      // Toggle fullscreen với phím F (như YouTube)
+      if (event.key === 'f' || event.key === 'F') {
+        event.preventDefault();
+        toggleFullscreen();
+      }
+      // ESC để thoát fullscreen
+      if (event.key === 'Escape' && isFullscreen) {
+        exitFullscreen();
+      }
+      
+      // Reset timer khi có hoạt động
+      handleUserActivity();
+    };
+
+    // User activity events để reset timer
+    const userActivityEvents = ['mousemove', 'mousedown', 'click', 'scroll', 'touchstart'];
+    
+    userActivityEvents.forEach(eventType => {
+      document.addEventListener(eventType, handleUserActivity);
+    });
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+    document.addEventListener('msfullscreenchange', handleFullscreenChange);
+    document.addEventListener('keydown', handleKeyPress);
+
+    return () => {
+      userActivityEvents.forEach(eventType => {
+        document.removeEventListener(eventType, handleUserActivity);
+      });
+      
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('msfullscreenchange', handleFullscreenChange);
+      document.removeEventListener('keydown', handleKeyPress);
+    };
+  }, [isFullscreen, handleUserActivity]);
 
   // Enhanced video state sync with predictive positioning
   useEffect(() => {
@@ -396,23 +576,30 @@ export function VideoPlayer() {
     
     const now = Date.now();
     
-    // Debounce rapid updates
-    if (now - lastStateUpdate < 300) return; // Reduced debounce for more responsive sync
+    // Giảm debounce time để responsive hơn
+    if (now - lastStateUpdate < 100) return;
     
-    // Sync playing state
+    // Sync playing state FIRST và quan trọng nhất
     const shouldPlay = !videoState.paused;
+    const isCurrentlyPaused = playerRef.current.paused;
+    
     console.log('Syncing video state:', {
       shouldPlay,
       currentPaused: videoState.paused,
+      playerPaused: isCurrentlyPaused,
       position: videoState.position,
       isHost: hostState.isHost,
       lastUpdated: videoState.lastUpdated
     });
     
-    // Control video playback
-    if (shouldPlay && playerRef.current.paused) {
-      playerRef.current.play().catch(console.error);
-    } else if (!shouldPlay && !playerRef.current.paused) {
+    // Control video playback - ĐÂY LÀ PHẦN QUAN TRỌNG NHẤT
+    if (shouldPlay && isCurrentlyPaused) {
+      console.log('▶️ Starting video playback');
+      playerRef.current.play().catch((error) => {
+        console.error('Play error:', error);
+      });
+    } else if (!shouldPlay && !isCurrentlyPaused) {
+      console.log('⏸️ Pausing video playback');
       playerRef.current.pause();
     }
     
@@ -423,7 +610,7 @@ export function VideoPlayer() {
     const currentRate = playerRef.current.playbackRate;
     const targetRate = videoState.playbackRate || 1.0;
     if (Math.abs(currentRate - targetRate) > 0.01) {
-      console.log('Syncing playback rate:', {
+      console.log('🎛️ Syncing playback rate:', {
         currentRate,
         targetRate,
         isHost: hostState.isHost
@@ -509,7 +696,7 @@ export function VideoPlayer() {
     if (videoState.lastUpdated && videoState.lastUpdated !== lastStateUpdate) {
       setLastStateUpdate(videoState.lastUpdated);
     }
-  }, [videoState.paused, videoState.position, videoState.videoUrl, videoState.playbackRate, videoState.lastUpdated, localTime, isSeeking, hostState.isHost, lastStateUpdate, volume, connectionState.rtt, setVideoState]);
+  }, [videoState.paused, videoState.position, videoState.videoUrl, videoState.playbackRate, videoState.lastUpdated, localTime, isSeeking, hostState.isHost, lastStateUpdate, volume, connectionState.rtt]);
 
   // Force duration load when video URL changes
   useEffect(() => {
@@ -557,6 +744,15 @@ export function VideoPlayer() {
     const interval = setInterval(checkConnection, 10000); // Check every 10 seconds
     return () => clearInterval(interval);
   }, [connectionState.lastSync, hostState.isHost, syncServerTime]);
+
+  // Cleanup timeout khi component unmount
+  useEffect(() => {
+    return () => {
+      if (hideControlsTimeoutRef.current) {
+        clearTimeout(hideControlsTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Debug logging - Enhanced
   console.log('VideoPlayer state:', {
@@ -607,7 +803,16 @@ export function VideoPlayer() {
     <div className="space-y-4">
       {/* Video Player */}
       <Card className="gradient-card border-card-border overflow-hidden">
-        <div className="relative aspect-video bg-black">
+        <div 
+          ref={videoContainerRef}
+          className={cn(
+            "relative aspect-video bg-black",
+            isFullscreen && "fixed inset-0 z-50 bg-black aspect-auto flex items-center justify-center",
+            isFullscreen && !showFullscreenControls && "cursor-none"
+          )}
+          onMouseMove={isFullscreen ? handleUserActivity : undefined}
+          onClick={isFullscreen ? handleUserActivity : undefined}
+        >
           {isVideoLoading && (
             <div className="absolute inset-0 flex items-center justify-center z-10">
               <div className="text-center space-y-4">
@@ -668,7 +873,10 @@ export function VideoPlayer() {
             onPause={() => {
               console.log('Video onPause event triggered, current paused state:', videoState.paused);
             }}
-            className="w-full h-full bg-black"
+            className={cn(
+              "w-full h-full bg-black",
+              isFullscreen && "max-w-full max-h-full object-contain"
+            )}
           />
           
           {/* Sync Status Overlay */}
@@ -723,10 +931,153 @@ export function VideoPlayer() {
               </Badge>
             </div>
           )}
+
+          {/* Fullscreen Controls Overlay (tương tự YouTube) */}
+          {isFullscreen && (
+            <div 
+              className={cn(
+                "absolute inset-0 flex flex-col justify-between p-4 bg-gradient-to-t from-black/60 via-transparent to-black/60 transition-opacity duration-300",
+                showFullscreenControls ? "opacity-100" : "opacity-0 pointer-events-none"
+              )}
+              onMouseMove={handleUserActivity}
+              onClick={handleUserActivity}
+            >
+              {/* Top Controls */}
+              <div className="flex justify-between items-start">
+                <div className="flex gap-2">
+                  {videoState.videoFilename && (
+                    <Badge variant="outline" className="bg-black/70 backdrop-blur-sm text-white border-white/20">
+                      {videoState.videoFilename}
+                    </Badge>
+                  )}
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={exitFullscreen}
+                  className="text-white hover:bg-white/20"
+                >
+                  <Minimize className="w-5 h-5" />
+                </Button>
+              </div>
+
+              {/* Bottom Controls */}
+              <div className="space-y-4">
+                {/* Progress Bar */}
+                <div className="space-y-2">
+                  <Slider
+                    value={[localTime]}
+                    max={duration}
+                    step={0.1}
+                    onValueChange={([value]) => {
+                      if (hostState.isHost) {
+                        setLocalTime(value);
+                        setIsSeeking(true);
+                        if (playerRef.current) {
+                          playerRef.current.currentTime = value;
+                        }
+                      }
+                    }}
+                    onValueCommit={([value]) => {
+                      if (hostState.isHost) {
+                        handleSeek(value);
+                      }
+                    }}
+                    disabled={!hostState.isHost || isUpdatingState}
+                    className="w-full"
+                  />
+                  <div className="flex items-center justify-between text-sm text-white font-mono">
+                    <span>{formatTime(localTime)}</span>
+                    <span>{formatTime(duration)}</span>
+                  </div>
+                </div>
+
+                {/* Control Buttons */}
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    {/* Play/Pause */}
+                    <Button
+                      variant="ghost"
+                      size="lg"
+                      onClick={handlePlayPause}
+                      disabled={!hostState.isHost || isUpdatingState}
+                      className="text-white hover:bg-white/20"
+                    >
+                      {isUpdatingState ? (
+                        <div className="w-6 h-6 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                      ) : videoState.paused ? (
+                        <Play className="w-6 h-6" />
+                      ) : (
+                        <Pause className="w-6 h-6" />
+                      )}
+                    </Button>
+
+                    {/* Skip buttons */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleSkip(-10)}
+                      disabled={!hostState.isHost}
+                      className="text-white hover:bg-white/20"
+                    >
+                      <SkipBack className="w-4 h-4 mr-1" />
+                      10s
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleSkip(10)}
+                      disabled={!hostState.isHost}
+                      className="text-white hover:bg-white/20"
+                    >
+                      <SkipForward className="w-4 h-4 mr-1" />
+                      10s
+                    </Button>
+
+                    {/* Volume */}
+                    <div className="flex items-center gap-2 text-white">
+                      <Volume2 className="w-4 h-4" />
+                      <Slider
+                        value={[volume]}
+                        max={1}
+                        step={0.01}
+                        onValueChange={([value]) => setVolume(value)}
+                        className="w-20"
+                      />
+                      <span className="text-xs w-8">{Math.round(volume * 100)}%</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {/* Sync button */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleSyncNow}
+                      disabled={hostState.isHost}
+                      className="text-white hover:bg-white/20"
+                    >
+                      <RotateCcw className="w-4 h-4 mr-1" />
+                      Sync
+                    </Button>
+
+                    {/* Status badges */}
+                    <Badge 
+                      variant="outline" 
+                      className="bg-black/70 text-white border-white/20"
+                    >
+                      {connectionState.rtt}ms
+                    </Badge>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </Card>
 
-      {/* Controls */}
+      {/* Controls (ẩn khi fullscreen) */}
+      {!isFullscreen && (
       <Card className="gradient-card border-card-border">
         <CardContent className="space-y-4 pt-6">
           {/* Progress Bar */}
@@ -837,6 +1188,22 @@ export function VideoPlayer() {
                 {Math.round(volume * 100)}%
               </span>
             </div>
+
+            {/* Fullscreen Control */}
+            <div className="flex items-center">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={toggleFullscreen}
+                title={isFullscreen ? "Exit fullscreen (f)" : "Enter fullscreen (f)"}
+              >
+                {isFullscreen ? (
+                  <Minimize className="w-4 h-4" />
+                ) : (
+                  <Maximize className="w-4 h-4" />
+                )}
+              </Button>
+            </div>
           </div>
           
           {/* Playback Rate Control (Host only) */}
@@ -892,6 +1259,7 @@ export function VideoPlayer() {
           </div>
         </CardContent>
       </Card>
+      )}
     </div>
   );
 }
