@@ -118,7 +118,35 @@ export default function Room() {
   // Handle video delete
   const handleVideoDelete = async (videoId: string) => {
     try {
+      // Tìm video đang bị xóa trong danh sách
+      const videoToDelete = roomVideos.find(video => video.id === videoId);
+      const deletedVideoIndex = roomVideos.findIndex(video => video.id === videoId) + 1;
+      
+      // Kiểm tra nếu video đang bị xóa là video hiện tại đang phát
+      const isCurrentVideo = currentVideoIndex === deletedVideoIndex;
+      const isActiveVideo = videoToDelete && videoState.videoUrl === videoToDelete.video_url;
+      
       await supabaseApi.deleteRoomVideo(videoId);
+      
+      // Nếu video đang bị xóa là video hiện tại đang phát, dừng phát video
+      if (isCurrentVideo || isActiveVideo) {
+        // Cập nhật trạng thái video để dừng phát
+        if (hostState.isHost && room) {
+          await supabaseApi.updateRoomState(room.id, {
+            video_url: null,
+            paused: true,
+            position: 0,
+            current_video_index: null,
+            updated_at: new Date().toISOString()
+          });
+        }
+        
+        // Reset currentVideoIndex nếu cần thiết
+        if (isCurrentVideo) {
+          setCurrentVideoIndex(1);
+        }
+      }
+      
       await loadRoomVideos();
       toast({
         title: "Video deleted",

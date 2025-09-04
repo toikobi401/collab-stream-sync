@@ -34,6 +34,10 @@ interface AppStore {
   hostState: HostState;
   setHostState: (state: Partial<HostState>) => void;
   
+  // UI State
+  isFullscreen: boolean;
+  setFullscreen: (fullscreen: boolean) => void;
+  
   // Actions
   reset: () => void;
 }
@@ -108,6 +112,10 @@ export const useStore = create<AppStore>((set, get) => ({
     hostState: { ...prev.hostState, ...state }
   })),
   
+  // UI State
+  isFullscreen: false,
+  setFullscreen: (fullscreen) => set({ isFullscreen: fullscreen }),
+  
   // Actions
   reset: () => set({
     room: null,
@@ -142,3 +150,5 @@ export const useMembers = () => useStore((state) => state.members);
 export const useVideoState = () => useStore((state) => state.videoState);
 export const useConnectionState = () => useStore((state) => state.connectionState);
 export const useHostState = () => useStore((state) => state.hostState);
+export const useFullscreen = () => useStore((state) => state.isFullscreen);
+export const useSetFullscreen = () => useStore((state) => state.setFullscreen);

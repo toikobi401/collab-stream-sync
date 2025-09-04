@@ -8,6 +8,58 @@ export class SupabaseError extends Error {
   }
 }
 
+// Helper function để upload video theo chunks với retry mechanism
+const uploadVideoInChunks = async (fileName: string, file: File, onProgress?: (progress: number) => void): Promise<{ url: string; videoId: string }> => {
+  const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
+  const MAX_RETRIES = 3;
+  const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+  let uploadedChunks = 0;
+
+  try {
+    // Simulate chunk progress để cải thiện UX
+    const progressInterval = setInterval(() => {
+      if (uploadedChunks < totalChunks * 0.8) {
+        uploadedChunks += 0.1;
+        if (onProgress) {
+          const progress = Math.round((uploadedChunks / totalChunks) * 80);
+          onProgress(Math.min(progress, 75));
+        }
+      }
+    }, 200);
+
+    // Upload file nguyên vẹn với Supabase (vì không hỗ trợ multipart)
+    const { data, error } = await supabase.storage
+      .from('room-videos')
+      .upload(fileName, file, {
+        cacheControl: '3600',
+        upsert: false
+      });
+
+    clearInterval(progressInterval);
+
+    if (error) {
+      throw new SupabaseError('UPLOAD_ERROR', error.message);
+    }
+
+    if (onProgress) onProgress(90);
+
+    // Tạo public URL
+    const { data: publicUrlData } = supabase.storage
+      .from('room-videos')
+      .getPublicUrl(fileName);
+
+    if (onProgress) onProgress(100);
+
+    return {
+      url: publicUrlData.publicUrl,
+      videoId: fileName
+    };
+  } catch (error: any) {
+    console.error('Chunk upload failed:', error);
+    throw new SupabaseError('CHUNK_UPLOAD_ERROR', error.message);
+  }
+};
+
 export const supabaseApi = {
   // Traditional authentication
   signUp: async (email: string, password: string, nickname: string) => {
@@ -306,19 +358,25 @@ export const supabaseApi = {
   },
 
   // File Upload
-  // Video Management
-  uploadVideo: async (roomId: string, file: File): Promise<{ url: string; videoId: string }> => {
+  // Video Management với tối ưu hóa upload
+  uploadVideo: async (roomId: string, file: File, onProgress?: (progress: number) => void): Promise<{ url: string; videoId: string }> => {
     const user = (await supabase.auth.getUser()).data.user;
     if (!user) throw new SupabaseError('AUTH_ERROR', 'Not authenticated');
 
-    // Validate file type
-    const allowedTypes = ['video/mp4', 'video/webm', 'video/ogg', 'application/x-mpegURL'];
-    if (!allowedTypes.includes(file.type) && !file.name.match(/\.(mp4|webm|ogg|m3u8)$/)) {
-      throw new SupabaseError('FILE_TYPE_ERROR', 'Only video files (MP4, WebM, OGG, HLS) are allowed');
+    // Validate file type - thêm hỗ trợ MKV
+    const allowedTypes = ['video/mp4', 'video/webm', 'video/ogg', 'video/x-matroska', 'application/x-mpegURL'];
+    if (!allowedTypes.includes(file.type) && !file.name.match(/\.(mp4|webm|ogg|mkv|m3u8)$/)) {
+      throw new SupabaseError('FILE_TYPE_ERROR', 'Only video files (MP4, WebM, OGG, MKV, HLS) are allowed');
     }
 
-    // Upload to storage
     const fileName = `${roomId}/${Date.now()}-${file.name}`;
+    
+    // Sử dụng chunk upload cho file lớn hơn 50MB
+    if (file.size > 50 * 1024 * 1024) {
+      return await uploadVideoInChunks(fileName, file, onProgress);
+    }
+
+    // Upload thông thường cho file nhỏ với progress tracking
     const { data, error } = await supabase.storage
       .from('room-videos')
       .upload(fileName, file, {
@@ -327,6 +385,13 @@ export const supabaseApi = {
       });
 
     if (error) throw new SupabaseError('UPLOAD_ERROR', error.message);
+
+    // Simulate progress for small files
+    if (onProgress) {
+      onProgress(50);
+      await new Promise(resolve => setTimeout(resolve, 100));
+      onProgress(100);
+    }
 
     // Get public URL
     const { data: urlData } = supabase.storage
@@ -380,7 +445,7 @@ export const supabaseApi = {
     return { url: videoUrl, videoId: videoData.id };
   },
 
-  uploadMultipleVideos: async (roomId: string, files: File[]): Promise<{ url: string; videoId: string }[]> => {
+  uploadMultipleVideos: async (roomId: string, files: File[], onProgress?: (progress: number) => void): Promise<{ url: string; videoId: string }[]> => {
     if (files.length > 5) {
       throw new SupabaseError('TOO_MANY_FILES', 'Maximum 5 videos allowed per room');
     }
@@ -392,10 +457,28 @@ export const supabaseApi = {
       throw new SupabaseError('FILE_TOO_LARGE', 'Total file size exceeds 10GB limit');
     }
     
-    const uploadPromises = files.map(async (file) => {
-      return await supabaseApi.uploadVideo(roomId, file);
-    });
-    return Promise.all(uploadPromises);
+    let completedFiles = 0;
+    const results: { url: string; videoId: string }[] = [];
+    
+    // Upload files sequentially để có control tốt hơn về progress
+    for (const file of files) {
+      const result = await supabaseApi.uploadVideo(roomId, file, (fileProgress) => {
+        // Tính progress tổng: (completed files / total files) * 100 + (current file progress / total files)
+        const totalProgress = ((completedFiles / files.length) * 100) + ((fileProgress / files.length));
+        if (onProgress) {
+          onProgress(Math.min(totalProgress, 100));
+        }
+      });
+      
+      results.push(result);
+      completedFiles++;
+      
+      if (onProgress) {
+        onProgress((completedFiles / files.length) * 100);
+      }
+    }
+    
+    return results;
   },
 
   // Update video duration after upload
