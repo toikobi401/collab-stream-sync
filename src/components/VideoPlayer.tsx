@@ -42,6 +42,8 @@ export function VideoPlayer() {
   
   // Fullscreen states
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showFullscreenControls, setShowFullscreenControls] = useState(true);
+  const hideControlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   const videoState = useVideoState();
   const hostState = useHostState();
@@ -479,6 +481,45 @@ export function VideoPlayer() {
     }
   };
 
+  // Auto-hide controls functions (tương tự YouTube)
+  const resetHideControlsTimer = useCallback(() => {
+    // Clear existing timeout
+    if (hideControlsTimeoutRef.current) {
+      clearTimeout(hideControlsTimeoutRef.current);
+    }
+
+    // Show controls
+    setShowFullscreenControls(true);
+
+    // Only set hide timer in fullscreen mode
+    if (isFullscreen) {
+      hideControlsTimeoutRef.current = setTimeout(() => {
+        setShowFullscreenControls(false);
+      }, 5000); // 5 giây
+    }
+  }, [isFullscreen]);
+
+  const handleUserActivity = useCallback(() => {
+    if (isFullscreen) {
+      resetHideControlsTimer();
+    }
+  }, [isFullscreen, resetHideControlsTimer]);
+
+  // Reset timer when entering fullscreen
+  useEffect(() => {
+    if (isFullscreen) {
+      setShowFullscreenControls(true);
+      resetHideControlsTimer();
+    } else {
+      // Clear timer when exiting fullscreen
+      if (hideControlsTimeoutRef.current) {
+        clearTimeout(hideControlsTimeoutRef.current);
+        hideControlsTimeoutRef.current = null;
+      }
+      setShowFullscreenControls(true);
+    }
+  }, [isFullscreen, resetHideControlsTimer]);
+
   // Listen for fullscreen changes
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -500,7 +541,17 @@ export function VideoPlayer() {
       if (event.key === 'Escape' && isFullscreen) {
         exitFullscreen();
       }
+      
+      // Reset timer khi có hoạt động
+      handleUserActivity();
     };
+
+    // User activity events để reset timer
+    const userActivityEvents = ['mousemove', 'mousedown', 'click', 'scroll', 'touchstart'];
+    
+    userActivityEvents.forEach(eventType => {
+      document.addEventListener(eventType, handleUserActivity);
+    });
 
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
@@ -508,12 +559,16 @@ export function VideoPlayer() {
     document.addEventListener('keydown', handleKeyPress);
 
     return () => {
+      userActivityEvents.forEach(eventType => {
+        document.removeEventListener(eventType, handleUserActivity);
+      });
+      
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
       document.removeEventListener('msfullscreenchange', handleFullscreenChange);
       document.removeEventListener('keydown', handleKeyPress);
     };
-  }, [isFullscreen]);
+  }, [isFullscreen, handleUserActivity]);
 
   // Enhanced video state sync with predictive positioning
   useEffect(() => {
@@ -690,6 +745,15 @@ export function VideoPlayer() {
     return () => clearInterval(interval);
   }, [connectionState.lastSync, hostState.isHost, syncServerTime]);
 
+  // Cleanup timeout khi component unmount
+  useEffect(() => {
+    return () => {
+      if (hideControlsTimeoutRef.current) {
+        clearTimeout(hideControlsTimeoutRef.current);
+      }
+    };
+  }, []);
+
   // Debug logging - Enhanced
   console.log('VideoPlayer state:', {
     videoUrl: videoState.videoUrl,
@@ -743,8 +807,11 @@ export function VideoPlayer() {
           ref={videoContainerRef}
           className={cn(
             "relative aspect-video bg-black",
-            isFullscreen && "fixed inset-0 z-50 bg-black aspect-auto flex items-center justify-center"
+            isFullscreen && "fixed inset-0 z-50 bg-black aspect-auto flex items-center justify-center",
+            isFullscreen && !showFullscreenControls && "cursor-none"
           )}
+          onMouseMove={isFullscreen ? handleUserActivity : undefined}
+          onClick={isFullscreen ? handleUserActivity : undefined}
         >
           {isVideoLoading && (
             <div className="absolute inset-0 flex items-center justify-center z-10">
@@ -867,7 +934,14 @@ export function VideoPlayer() {
 
           {/* Fullscreen Controls Overlay (tương tự YouTube) */}
           {isFullscreen && (
-            <div className="absolute inset-0 flex flex-col justify-between p-4 bg-gradient-to-t from-black/60 via-transparent to-black/60 opacity-0 hover:opacity-100 transition-opacity duration-300">
+            <div 
+              className={cn(
+                "absolute inset-0 flex flex-col justify-between p-4 bg-gradient-to-t from-black/60 via-transparent to-black/60 transition-opacity duration-300",
+                showFullscreenControls ? "opacity-100" : "opacity-0 pointer-events-none"
+              )}
+              onMouseMove={handleUserActivity}
+              onClick={handleUserActivity}
+            >
               {/* Top Controls */}
               <div className="flex justify-between items-start">
                 <div className="flex gap-2">
